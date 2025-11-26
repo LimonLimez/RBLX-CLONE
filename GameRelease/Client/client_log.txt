@@ -1,0 +1,57 @@
+Starting Client...
+Window Created.
+ImGui Initialized.
+Renderer::init() starting...
+Main vertex shader found at: shaders/vertex.glsl
+Compiling Main Shader...
+Shadow vertex shader found at: shaders/shadow_depth_vertex.glsl
+Compiling Depth Shader...
+Initializing Meshes...
+Renderer::init() done.
+Renderer Initialized.
+Skybox Initialized.
+PhysicsWorld Initialized.
+ShadowMap Initialized.
+Network Initialized.
+Avatar loaded from avatar.txt
+Loading texture: face.png - Size: 420x420, Components: 2
+Face Texture Loaded successfully (ID: 3)
+Starting Main Loop...
+Frame 0 ImGui NewFrame
+Frame 1 ImGui NewFrame
+Frame 2 ImGui NewFrame
+Frame 3 ImGui NewFrame
+Frame 4 ImGui NewFrame
+Connected! Waiting for world state from server...
+Recv bytes: 3842
+Joined with ID: 2
+WORLD_STATE received - cleaning up before reset
+Resetting physics world
+Physics world reset complete
+Loaded complete world state from server: 28 parts
+Creating Character at: nan, nan, nan
+Remote Player Joined: Guest (ID: 1)
+Creating remote character for player 1
+Avatar data not found for player 1, using defaulRemote Player Joined: Guest (ID: 2)
+Creating remote character for player 2
+Avatar data not found for player 2, uPacket Type: 2 Size: 26
+Recv bytes: 288
+Packet Type: 5 Size: 252
+Packet Type: 2 Size: 26
+Recv bytes: 31
+Packet Type: 5 Size: 252
+Packet Type: 2 Size: 26
+Recv bytes: 31
+Recv bytes: 31
+Packet Type: 5 Size: 252
+Packet Type: 2 Size: 26
+Recv bytes: 31
+Packet Type: 5 Size: 252
+Packet Type: 2 Size: 26
+Recv bytes: 31
+Packet Type: 5 Size: 252
+Packet Type: 2 Size: 26
+Recv bytes: 31
+Player 2 left, removed character and parts
+Packet Type: 5 Size: 252
+Recv bytes: 257

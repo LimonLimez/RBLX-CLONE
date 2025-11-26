@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - RBLX Game Engine</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+        }
+        
+        .user-info {
+            text-align: right;
+        }
+        
+        .user-info p {
+            color: #666;
+            margin: 5px 0;
+        }
+        
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: bold;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+        
+        .button-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .button-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .button-danger {
+            background: #e74c3c;
+        }
+        
+        .button-danger:hover {
+            background: #c0392b;
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        
+        .card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        
+        .card p {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+        
+        .stat {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 Dashboard</h1>
+            <div class="user-info">
+                <p id="username">Loading...</p>
+                <button class="button button-danger" onclick="logout()">Logout</button>
+            </div>
+        </div>
+        
+        <div class="dashboard-grid">
+            <div class="card">
+                <h2>Welcome Back!</h2>
+                <p>You're successfully logged in to RBLX Game Engine. You can now use the client to connect to servers.</p>
+                <a href="/avatar" class="button">Customize Avatar</a>
+                <a href="/" class="button button-secondary">Go to Home</a>
+            </div>
+            
+            <div class="card">
+                <h2>Quick Start</h2>
+                <p>1. Open the RBLX Client application</p>
+                <p>2. Enter your username and password</p>
+                <p>3. Click "Login" to authenticate</p>
+                <p>4. Enter server IP and connect!</p>
+            </div>
+            
+            <div class="card">
+                <h2>Account Info</h2>
+                <div class="stats">
+                    <div class="stat">
+                        <div class="stat-value" id="userId">-</div>
+                        <div class="stat-label">User ID</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Get token from localStorage
+        const token = localStorage.getItem('authToken');
+        const username = localStorage.getItem('username');
+        const userId = localStorage.getItem('userId');
+        
+        if (!token) {
+            // No token, redirect to login
+            window.location.href = '/login';
+        } else {
+            // Display user info
+            document.getElementById('username').textContent = username || 'User';
+            document.getElementById('userId').textContent = userId || '-';
+            
+            // Verify token is still valid
+            fetch('/api/verify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ token })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    // Token invalid, redirect to login
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('username');
+                    localStorage.removeItem('userId');
+                    window.location.href = '/login';
+                }
+            })
+            .catch(error => {
+                console.error('Error verifying token:', error);
+            });
+        }
+        
+        function logout() {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('username');
+            localStorage.removeItem('userId');
+            window.location.href = '/login';
+        }
+    </script>
+</body>
+</html>
+

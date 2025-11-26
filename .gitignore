@@ -1,0 +1,81 @@
+# Build directories
+build/
+build2/
+build_old/
+cmake-build-*/
+
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.obj
+*.o
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.slnx
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.db
+*.VC.db
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node modules
+node_modules/
+package-lock.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+*.tlog
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+*.bak
+*.backup
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Game release (keep structure but ignore binaries)
+GameRelease/Client/*.exe
+GameRelease/Server/*.exe
+
+# Auth tokens (sensitive)
+auth_token.txt
+*.token
+
+# ImGui config
+imgui.ini
+
+# Test images (optional - uncomment if you don't want to commit these)
+# deer-mouse-2.jpg
+# emoji-fudido.png
+# face.png
+# face_hex.txt
+
