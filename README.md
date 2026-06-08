@@ -57,6 +57,14 @@ cmake --build build/windows-debug --config Debug
 ctest --test-dir build/windows-debug -C Debug
 ```
 
+The project has also been verified with a portable MinGW/Ninja toolchain:
+
+```powershell
+cmake -S . -B build/ninja -G Ninja -DCMAKE_C_COMPILER=C:\path\to\gcc.exe -DCMAKE_CXX_COMPILER=C:\path\to\g++.exe -DRBLX_BUILD_TESTS=ON
+cmake --build build/ninja
+ctest --test-dir build/ninja --output-on-failure
+```
+
 Useful CMake options:
 
 - `RBLX_BUILD_CLIENT=ON|OFF`
@@ -140,7 +148,7 @@ Scale operations assign the decomposed absolute scale from ImGuizmo and clamp it
 - The binary protocol still depends on matching C++ struct layouts across the same build family.
 - The web service uses SQLite and local JWT storage in the browser; it is not hardened for internet deployment.
 - Client UI/networking code remains large and should be split further.
-- C++ runtime behavior still needs manual testing on a machine with CMake and a C++ compiler installed.
+- C++ build/test is verified with CMake, Ninja, and MinGW GCC. Client, Server, and Studio runtime behavior still need manual testing with a graphics-capable Windows desktop.
 
 ## Troubleshooting
 

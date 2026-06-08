@@ -2,6 +2,7 @@
 
 #include <string>
 #include <windows.h>
+#include <shellapi.h>
 #include <winhttp.h>
 #include <sstream>
 #pragma comment(lib, "winhttp.lib")

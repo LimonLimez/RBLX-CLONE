@@ -23,6 +23,10 @@ endif()
 
 include(FetchContent)
 
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "Build GLFW examples" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "Build GLFW tests" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build GLFW documentation" FORCE)
+
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw
@@ -49,7 +53,10 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo
     GIT_TAG be8aa4aeab86b402701c8c1df011bd8cd776760b
 )
-FetchContent_MakeAvailable(imguizmo)
+FetchContent_GetProperties(imguizmo)
+if(NOT imguizmo_POPULATED)
+    FetchContent_Populate(imguizmo)
+endif()
 
 FetchContent_Declare(
     rp3d
@@ -57,6 +64,12 @@ FetchContent_Declare(
     GIT_TAG v0.9.0
 )
 FetchContent_MakeAvailable(rp3d)
+if(TARGET reactphysics3d AND NOT MSVC)
+    target_compile_options(reactphysics3d PUBLIC
+        $<$<COMPILE_LANGUAGE:CXX>:-include>
+        $<$<COMPILE_LANGUAGE:CXX>:cstdint>
+    )
+endif()
 
 FetchContent_Declare(
     stb
@@ -97,7 +110,7 @@ set(IMGUI_SOURCES
 )
 
 set(IMGUIZMO_SOURCES
-    ${imguizmo_SOURCE_DIR}/ImGuizmo.cpp
+    ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp
 )
 
 function(configure_rblx_target target_name)
@@ -107,6 +120,7 @@ function(configure_rblx_target target_name)
         ${imgui_SOURCE_DIR}
         ${imgui_SOURCE_DIR}/backends
         ${imguizmo_SOURCE_DIR}
+        ${imguizmo_SOURCE_DIR}/src
         ${glad_SOURCE_DIR}/include
     )
 
@@ -138,7 +152,7 @@ if(RBLX_BUILD_CLIENT)
         ${IMGUI_SOURCES}
     )
     configure_rblx_target(Client)
-    target_link_libraries(Client PRIVATE glfw glm reactphysics3d glad ws2_32 winhttp)
+    target_link_libraries(Client PRIVATE glfw glm reactphysics3d glad ws2_32 winhttp shell32 comdlg32)
 endif()
 
 if(RBLX_BUILD_SERVER)
