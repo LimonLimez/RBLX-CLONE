@@ -8,7 +8,32 @@
 
 class Auth {
 public:
-    static std::string httpPost(const std::string& url, const std::string& jsonData) {
+    static std::string jsonEscape(const std::string& value) {
+        std::ostringstream escaped;
+        for (char c : value) {
+            unsigned char uc = static_cast<unsigned char>(c);
+            switch (c) {
+                case '\\': escaped << "\\\\"; break;
+                case '"': escaped << "\\\""; break;
+                case '\b': escaped << "\\b"; break;
+                case '\f': escaped << "\\f"; break;
+                case '\n': escaped << "\\n"; break;
+                case '\r': escaped << "\\r"; break;
+                case '\t': escaped << "\\t"; break;
+                default:
+                    if (uc < 0x20) {
+                        escaped << "\\u00";
+                        const char* hex = "0123456789abcdef";
+                        escaped << hex[(uc >> 4) & 0x0f] << hex[uc & 0x0f];
+                    } else {
+                        escaped << c;
+                    }
+            }
+        }
+        return escaped.str();
+    }
+
+    static std::string httpPost(const std::string& url, const std::string& jsonData, const std::string& bearerToken = "") {
         std::string result;
         
         // Convert URL to wide string
@@ -62,6 +87,10 @@ public:
         
         // Set headers
         std::wstring headers = L"Content-Type: application/json\r\n";
+        if (!bearerToken.empty()) {
+            std::wstring wtoken(bearerToken.begin(), bearerToken.end());
+            headers += L"Authorization: Bearer " + wtoken + L"\r\n";
+        }
         WinHttpAddRequestHeaders(hRequest, headers.c_str(), (DWORD)headers.length(), WINHTTP_ADDREQ_FLAG_ADD);
         
         // Send request
@@ -109,16 +138,13 @@ public:
     }
     
     static std::string login(const std::string& username, const std::string& password, const std::string& serverUrl = "http://localhost:3000") {
-        // Escape JSON string
         std::ostringstream json;
-        json << "{\"username\":\"" << username << "\",\"password\":\"" << password << "\"}";
+        json << "{\"username\":\"" << jsonEscape(username) << "\",\"password\":\"" << jsonEscape(password) << "\"}";
         return httpPost(serverUrl + "/api/login", json.str());
     }
     
     static std::string verifyToken(const std::string& token, const std::string& serverUrl = "http://localhost:3000") {
-        std::ostringstream json;
-        json << "{\"token\":\"" << token << "\"}";
-        return httpPost(serverUrl + "/api/verify", json.str());
+        return httpPost(serverUrl + "/api/verify", "{}", token);
     }
     
     static void openBrowser(const std::string& url) {
@@ -126,7 +152,7 @@ public:
         ShellExecuteW(NULL, L"open", wurl.c_str(), NULL, NULL, SW_SHOWNORMAL);
     }
     
-    static std::string httpGet(const std::string& url) {
+    static std::string httpGet(const std::string& url, const std::string& bearerToken = "") {
         std::string result;
         
         // Convert URL to wide string
@@ -178,6 +204,12 @@ public:
             return "";
         }
         
+        if (!bearerToken.empty()) {
+            std::wstring wtoken(bearerToken.begin(), bearerToken.end());
+            std::wstring headers = L"Authorization: Bearer " + wtoken + L"\r\n";
+            WinHttpAddRequestHeaders(hRequest, headers.c_str(), (DWORD)headers.length(), WINHTTP_ADDREQ_FLAG_ADD);
+        }
+
         // Send request
         if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, 
                                WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
@@ -222,7 +254,7 @@ public:
     }
     
     static std::string getAvatar(const std::string& token, const std::string& serverUrl = "http://localhost:3000") {
-        return httpGet(serverUrl + "/api/avatar?token=" + token);
+        return httpGet(serverUrl + "/api/avatar", token);
     }
 };
 

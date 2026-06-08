@@ -2,9 +2,14 @@
 
 #include <string>
 
-class ServerAuth {
-public:
-    static bool verifyToken(const std::string& token, const std::string& serverUrl = "http://localhost:3000");
-    static std::string getAvatar(const std::string& token, const std::string& serverUrl = "http://localhost:3000");
+struct VerifiedUser {
+    bool success = false;
+    int userId = -1;
+    std::string username;
 };
 
+class ServerAuth {
+public:
+    static VerifiedUser verifyToken(const std::string& token, const std::string& serverUrl = "http://localhost:3000");
+    static std::string getAvatar(const std::string& token, const std::string& serverUrl = "http://localhost:3000");
+};

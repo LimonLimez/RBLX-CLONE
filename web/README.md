@@ -1,61 +1,36 @@
-# RBLX Game Engine - Web Server
+# RBLX Clone Web Backend
 
-This is the authentication web server for the RBLX Game Engine.
+This is the local Express backend for account signup/login, token verification, and avatar storage.
 
 ## Setup
 
-1. **Install Node.js** (if not already installed)
-   - Download from https://nodejs.org/
-   - Version 16 or higher recommended
+```powershell
+npm.cmd install
+npm.cmd test
+npm.cmd start
+```
 
-2. **Install Dependencies**
-   ```bash
-   cd web
-   npm install
-   ```
+Use `npm.cmd` on Windows PowerShell if script execution policy blocks `npm.ps1`.
 
-3. **Start the Server**
-   ```bash
-   npm start
-   ```
-   
-   The server will run on `http://localhost:3000`
+Copy `.env.example` to `.env` for local overrides. Do not commit `.env`.
 
-## Features
+## Environment
 
-- User signup with username and password
-- User login with authentication tokens
-- Token verification API
-- SQLite database for user storage
-- Password hashing with bcrypt
-- JWT token generation
+- `NODE_ENV` - `development`, `test`, or `production`.
+- `PORT` - server port, default `3000`.
+- `DATABASE_PATH` - SQLite database path, default `users.db`.
+- `JWT_SECRET` - required and strong in production.
+- `JWT_EXPIRES_IN` - token lifetime, default `7d`.
+- `CORS_ORIGIN` - comma-separated allowed origins.
+- `JSON_BODY_LIMIT` - JSON body size limit.
+- `AUTH_RATE_LIMIT_WINDOW_MS` and `AUTH_RATE_LIMIT_MAX` - auth endpoint rate limit.
 
-## API Endpoints
+## API
 
-- `POST /api/signup` - Create a new account
-  - Body: `{ "username": "string", "password": "string" }`
-  - Returns: `{ "success": true, "token": "jwt_token", "userId": number, "username": "string" }`
+- `POST /api/signup` with `{ "username": "Player_1", "password": "long-password" }`.
+- `POST /api/login` with `{ "username": "Player_1", "password": "long-password" }`.
+- `POST /api/verify` with `Authorization: Bearer <token>`.
+- `GET /api/avatar` with `Authorization: Bearer <token>`.
+- `POST /api/avatar` with `Authorization: Bearer <token>` and `{ "avatar": { ... } }`.
 
-- `POST /api/login` - Login with username and password
-  - Body: `{ "username": "string", "password": "string" }`
-  - Returns: `{ "success": true, "token": "jwt_token", "userId": number, "username": "string" }`
-
-- `POST /api/verify` - Verify a JWT token
-  - Body: `{ "token": "jwt_token" }`
-  - Returns: `{ "success": true, "userId": number, "username": "string" }`
-
-## Pages
-
-- `/` - Home page with login/signup links
-- `/login` - Login page
-- `/signup` - Sign up page
-
-## Database
-
-The server uses SQLite and creates a `users.db` file automatically on first run.
-
-## Security Note
-
-**IMPORTANT**: Change the `JWT_SECRET` in `server.js` before deploying to production!
-
-
+Avatar tokens are not accepted in query strings. `/api/verify` has a deprecated body-token fallback for older callers.

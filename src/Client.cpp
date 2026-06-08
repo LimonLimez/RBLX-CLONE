@@ -23,6 +23,8 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
@@ -182,6 +184,7 @@ bool showConnectionUI = false; // Track if connection UI should be shown
 std::map<int, Character*> remotePlayers;
 std::map<int, std::string> playerNames;
 std::vector<PlayerInfo> playerList;
+std::vector<char> clientReceiveBuffer;
 
 Character* myCharacter = nullptr;
 AvatarConfig currentAvatar;
@@ -607,26 +610,29 @@ int main() {
                             showConnectionUI = false;
                             Network::setNonBlocking(clientSocket);
                             
-                            // Send Connect Packet
-                            PacketHeader header;
-                            header.type = PacketType::CONNECT;
-                            header.size = sizeof(PacketConnect);
                             PacketConnect pkt;
+                            std::memset(&pkt, 0, sizeof(pkt));
                             
                             if (strlen(authToken) > 0) {
                                 // Authenticated user
-                                strncpy(pkt.username, myUsername, 32);
-                                strncpy(pkt.authToken, authToken, 255);
+                                strncpy(pkt.username, myUsername, sizeof(pkt.username) - 1);
+                                strncpy(pkt.authToken, authToken, sizeof(pkt.authToken) - 1);
                             } else {
                                 // Guest
-                                strncpy(pkt.username, "Guest", 32);
-                                pkt.authToken[0] = '\0';
+                                strncpy(pkt.username, "Guest", sizeof(pkt.username) - 1);
                             }
                             
-                            send(clientSocket, (char*)&header, sizeof(header), 0);
-                            send(clientSocket, (char*)&pkt, sizeof(pkt), 0);
-                            
-                            std::cout << "Connected! Waiting for world state from server..." << std::endl;
+                            if (!Network::sendStructPacket(clientSocket, PacketType::CONNECT, pkt)) {
+                                showLoginError = true;
+                                strncpy(loginErrorMsg, "Failed to send connect packet!", 255);
+                                isConnected = false;
+                                closesocket(clientSocket);
+                                clientSocket = INVALID_SOCKET;
+                                currentState = MENU_PLAY_CHOICE;
+                                showConnectionUI = true;
+                            } else {
+                                std::cout << "Connected! Waiting for world state from server..." << std::endl;
+                            }
                         }
                     }
                     
@@ -680,20 +686,51 @@ int main() {
                 int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
                 
                 if (bytesReceived > 0) {
+                    clientReceiveBuffer.insert(clientReceiveBuffer.end(), buffer, buffer + bytesReceived);
+
+                    std::vector<char> completeFrames;
+                    while (true) {
+                        PacketProtocol::ParsedPacket frame;
+                        PacketProtocol::ParseStatus status = PacketProtocol::tryReadFrame(clientReceiveBuffer, frame);
+                        if (status == PacketProtocol::ParseStatus::NeedMoreData) {
+                            break;
+                        }
+                        if (status == PacketProtocol::ParseStatus::Invalid) {
+                            std::cerr << "Disconnected after receiving malformed packet from server" << std::endl;
+                            isConnected = false;
+                            closesocket(clientSocket);
+                            clientSocket = INVALID_SOCKET;
+                            currentState = MENU_AUTH_CHOICE;
+                            showConnectionUI = false;
+                            clientReceiveBuffer.clear();
+                            break;
+                        }
+
+                        completeFrames.insert(
+                            completeFrames.end(),
+                            clientReceiveBuffer.begin(),
+                            clientReceiveBuffer.begin() + static_cast<std::ptrdiff_t>(frame.frameSize)
+                        );
+                        PacketProtocol::consumeFrame(clientReceiveBuffer, frame.frameSize);
+                    }
+
+                    char* packetBuffer = completeFrames.empty() ? nullptr : completeFrames.data();
+                    int bytesToProcess = static_cast<int>(completeFrames.size());
+
                     // Limit logging to prevent spam
                     static int logCounter = 0;
                     if (logCounter++ % 60 == 0) {
                         std::cout << "Recv bytes: " << bytesReceived << std::endl;
                     }
                     int offset = 0;
-                    while (offset < bytesReceived) {
-                        if (offset + sizeof(PacketHeader) > bytesReceived) break; // Safety check
+                    while (offset < bytesToProcess) {
+                        if (offset + sizeof(PacketHeader) > bytesToProcess) break; // Safety check
                         
-                        PacketHeader* header = (PacketHeader*)(buffer + offset);
+                        PacketHeader* header = (PacketHeader*)(packetBuffer + offset);
                         uint32_t packetSize = sizeof(PacketHeader) + header->size;
                         
                         // Safety check: ensure entire packet fits in buffer
-                        if (offset + packetSize > bytesReceived) {
+                        if (offset + packetSize > bytesToProcess) {
                             std::cerr << "Warning: Incomplete packet, waiting for more data" << std::endl;
                             break; // Wait for more data
                         }
@@ -709,7 +746,7 @@ int main() {
                                 offset += packetSize;
                                 continue;
                             }
-                            PacketWelcome* pkt = (PacketWelcome*)(buffer + offset + sizeof(PacketHeader));
+                            PacketWelcome* pkt = (PacketWelcome*)(packetBuffer + offset + sizeof(PacketHeader));
                              myPlayerId = pkt->playerId;
                              std::cout << "Joined with ID: " << myPlayerId << std::endl;
                              
@@ -727,7 +764,7 @@ int main() {
                                 offset += packetSize;
                                 continue;
                             }
-                            PacketPlayerJoin* pkt = (PacketPlayerJoin*)(buffer + offset + sizeof(PacketHeader));
+                            PacketPlayerJoin* pkt = (PacketPlayerJoin*)(packetBuffer + offset + sizeof(PacketHeader));
                             
                             // Validate player ID
                             if (pkt->playerId < 0 || pkt->playerId > 1000) {
@@ -827,7 +864,7 @@ int main() {
                                 offset += packetSize;
                                 continue;
                             }
-                            PacketPlayerLeave* pkt = (PacketPlayerLeave*)(buffer + offset + sizeof(PacketHeader));
+                            PacketPlayerLeave* pkt = (PacketPlayerLeave*)(packetBuffer + offset + sizeof(PacketHeader));
                             
                             // Safety check: don't remove local player's character (shouldn't be in remotePlayers anyway)
                             if (pkt->playerId == myPlayerId) {
@@ -894,7 +931,7 @@ int main() {
                                 offset += packetSize;
                                 continue;
                             }
-                            PacketPlayerState* pkt = (PacketPlayerState*)(buffer + offset + sizeof(PacketHeader));
+                            PacketPlayerState* pkt = (PacketPlayerState*)(packetBuffer + offset + sizeof(PacketHeader));
                             if (pkt->playerId != myPlayerId && remotePlayers.count(pkt->playerId)) {
                                 try {
                                     Character* remoteChar = remotePlayers[pkt->playerId];
@@ -916,7 +953,7 @@ int main() {
                             }
                             
                             // Read player count
-                            uint32_t playerCount = *(uint32_t*)(buffer + offset + sizeof(PacketHeader));
+                            uint32_t playerCount = *(uint32_t*)(packetBuffer + offset + sizeof(PacketHeader));
                             int expectedSize = sizeof(uint32_t) + playerCount * sizeof(PlayerInfo);
                             
                             if (header->size != expectedSize) {
@@ -928,7 +965,7 @@ int main() {
                             
                             playerList.clear();
                             if (playerCount > 0 && playerCount < 100) { // Safety limit
-                                PlayerInfo* players = (PlayerInfo*)(buffer + offset + sizeof(PacketHeader) + sizeof(uint32_t));
+                                PlayerInfo* players = (PlayerInfo*)(packetBuffer + offset + sizeof(PacketHeader) + sizeof(uint32_t));
                                 for (uint32_t i = 0; i < playerCount; i++) {
                                     playerList.push_back(players[i]);
                                     playerNames[players[i].playerId] = players[i].username;
@@ -980,7 +1017,7 @@ int main() {
                             }
                             
                             // Read part count
-                            uint32_t partCount = *(uint32_t*)(buffer + offset + sizeof(PacketHeader));
+                            uint32_t partCount = *(uint32_t*)(packetBuffer + offset + sizeof(PacketHeader));
                             int expectedSize = sizeof(uint32_t) + partCount * sizeof(PartData);
                             
                             if (header->size != expectedSize) {
@@ -1015,7 +1052,7 @@ int main() {
                             std::cout << "Physics world reset complete" << std::endl;
                             
                             // Read all parts
-                            PartData* partData = (PartData*)(buffer + offset + sizeof(PacketHeader) + sizeof(uint32_t));
+                            PartData* partData = (PartData*)(packetBuffer + offset + sizeof(PacketHeader) + sizeof(uint32_t));
                             
                             for (uint32_t i = 0; i < partCount; ++i) {
                                 PartData& data = partData[i];
@@ -1084,7 +1121,7 @@ int main() {
                                 continue;
                             }
                             int numUpdates = header->size / sizeof(PartUpdate);
-                            PartUpdate* updates = (PartUpdate*)(buffer + offset + sizeof(PacketHeader));
+                            PartUpdate* updates = (PartUpdate*)(packetBuffer + offset + sizeof(PacketHeader));
                             float now = (float)glfwGetTime();
                             for(int i=0; i<numUpdates; ++i) {
                                 PartUpdate& up = updates[i];
@@ -1144,16 +1181,14 @@ int main() {
                         offset += packetSize; // Use calculated packetSize
                     }
                 } 
-                else if (bytesReceived == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) {
-                    std::cout << "Disconnected. Error: " << WSAGetLastError() << std::endl;
+                else if (bytesReceived == 0 || (bytesReceived == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK)) {
+                    std::cout << "Disconnected. Error: " << (bytesReceived == 0 ? 0 : WSAGetLastError()) << std::endl;
                     isConnected = false; closesocket(clientSocket); clientSocket = INVALID_SOCKET; currentState = MENU_AUTH_CHOICE; showConnectionUI = false;
+                    clientReceiveBuffer.clear();
                 }
                 // Send state with safety checks
-                if (myCharacter && myPlayerId != -1) {
+                if (isConnected && clientSocket != INVALID_SOCKET && myCharacter && myPlayerId != -1) {
                     try {
-                        PacketHeader header;
-                        header.type = PacketType::PLAYER_STATE;
-                        header.size = sizeof(PacketPlayerState);
                         PacketPlayerState state;
                         state.playerId = myPlayerId;
                         state.position = myCharacter->getPosition();
@@ -1163,8 +1198,15 @@ int main() {
                         state.isWalking = (glm::length(myCharacter->debugMoveDir) > 0.1f);
                         state.isJumping = false;
                         state.health = myCharacter->health;
-                        send(clientSocket, (char*)&header, sizeof(header), 0);
-                        send(clientSocket, (char*)&state, sizeof(state), 0);
+                        if (!Network::sendStructPacket(clientSocket, PacketType::PLAYER_STATE, state)) {
+                            std::cout << "Disconnected while sending player state." << std::endl;
+                            isConnected = false;
+                            closesocket(clientSocket);
+                            clientSocket = INVALID_SOCKET;
+                            currentState = MENU_AUTH_CHOICE;
+                            showConnectionUI = false;
+                            clientReceiveBuffer.clear();
+                        }
                     } catch (...) {
                         std::cerr << "ERROR: Exception getting character state" << std::endl;
                     }

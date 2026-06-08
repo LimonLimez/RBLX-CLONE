@@ -1,4 +1,6 @@
 #include "WorldLoader.h"
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -14,7 +16,16 @@ void WorldLoader::loadWorld(const std::string& filename, std::deque<Part>& parts
     parts.clear();
     
     size_t count;
-    if (!(in >> count)) return;
+    if (!(in >> count)) {
+        std::cerr << "Malformed world file header: " << filename << std::endl;
+        return;
+    }
+
+    const size_t maxParts = 4096;
+    if (count > maxParts) {
+        std::cerr << "World file has too many parts: " << count << std::endl;
+        return;
+    }
     
     struct TempWeld {
         int partIndex;
@@ -24,7 +35,12 @@ void WorldLoader::loadWorld(const std::string& filename, std::deque<Part>& parts
     
     for (size_t i = 0; i < count; i++) {
         int shapeInt;
-        in >> shapeInt;
+        if (!(in >> shapeInt) || shapeInt < 0 || shapeInt > static_cast<int>(ShapeType::Cylinder)) {
+            std::cerr << "Malformed or unsupported part shape at index " << i << std::endl;
+            parts.clear();
+            physicsWorld.reset();
+            return;
+        }
         
         Part p;
         p.shape = (ShapeType)shapeInt;
@@ -36,17 +52,52 @@ void WorldLoader::loadWorld(const std::string& filename, std::deque<Part>& parts
             in >> p.name; 
         }
         
-        in >> p.parentIndex >> p.isFolder >> p.isCamera >> p.isSpawn;
+        if (!(in >> p.parentIndex >> p.isFolder >> p.isCamera >> p.isSpawn)) {
+            std::cerr << "Malformed hierarchy flags at part " << i << std::endl;
+            parts.clear();
+            physicsWorld.reset();
+            return;
+        }
         
-        in >> p.position.x >> p.position.y >> p.position.z
-           >> p.size.x >> p.size.y >> p.size.z
-           >> p.color.x >> p.color.y >> p.color.z
-           >> p.rotation.x >> p.rotation.y >> p.rotation.z
-           >> p.transparency >> p.reflectance
-           >> p.anchored >> p.canCollide;
+        if (!(in >> p.position.x >> p.position.y >> p.position.z
+                 >> p.size.x >> p.size.y >> p.size.z
+                 >> p.color.x >> p.color.y >> p.color.z
+                 >> p.rotation.x >> p.rotation.y >> p.rotation.z
+                 >> p.transparency >> p.reflectance
+                 >> p.anchored >> p.canCollide)) {
+            std::cerr << "Malformed transform/material data at part " << i << std::endl;
+            parts.clear();
+            physicsWorld.reset();
+            return;
+        }
+
+        auto finiteVec3 = [](const glm::vec3& value) {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        };
+
+        if (!finiteVec3(p.position) || !finiteVec3(p.size) || !finiteVec3(p.color) || !finiteVec3(p.rotation)) {
+            std::cerr << "Non-finite values in world part " << i << std::endl;
+            parts.clear();
+            physicsWorld.reset();
+            return;
+        }
+
+        p.size.x = std::clamp(p.size.x, 0.05f, 512.0f);
+        p.size.y = std::clamp(p.size.y, 0.05f, 512.0f);
+        p.size.z = std::clamp(p.size.z, 0.05f, 512.0f);
+        p.color.x = std::clamp(p.color.x, 0.0f, 1.0f);
+        p.color.y = std::clamp(p.color.y, 0.0f, 1.0f);
+        p.color.z = std::clamp(p.color.z, 0.0f, 1.0f);
+        p.transparency = std::clamp(p.transparency, 0.0f, 1.0f);
+        p.reflectance = std::clamp(p.reflectance, 0.0f, 1.0f);
            
         size_t weldCount;
-        in >> weldCount;
+        if (!(in >> weldCount) || weldCount > maxParts) {
+            std::cerr << "Malformed weld data at part " << i << std::endl;
+            parts.clear();
+            physicsWorld.reset();
+            return;
+        }
         
         if (weldCount > 0) {
             TempWeld tw;

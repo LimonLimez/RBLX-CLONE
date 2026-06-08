@@ -2,6 +2,7 @@
 build/
 build2/
 build_old/
+build-*/
 cmake-build-*/
 
 # Compiled binaries
@@ -39,12 +40,20 @@ cmake_install.cmake
 
 # Node modules
 node_modules/
-package-lock.json
+coverage/
 
 # Database files
 *.db
 *.sqlite
 *.sqlite3
+
+# Environment/local config
+.env
+.env.*
+!.env.example
+web/.env
+web/.env.*
+!web/.env.example
 
 # Logs
 *.log

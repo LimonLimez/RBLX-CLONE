@@ -310,7 +310,11 @@
         // Load avatar from server
         async function loadAvatar() {
             try {
-                const response = await fetch(`/api/avatar?token=${token}`);
+                const response = await fetch('/api/avatar', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
                 const data = await response.json();
                 if (data.success && data.avatar) {
                     avatar = data.avatar;
@@ -469,10 +473,10 @@
                 const response = await fetch('/api/avatar', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
                     },
                     body: JSON.stringify({
-                        token: token,
                         avatar: avatar
                     })
                 });
