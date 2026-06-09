@@ -416,16 +416,12 @@ input {
 }
 
 .social-dashboard {
-    grid-template-columns: minmax(240px, 0.85fr) minmax(340px, 1.15fr);
+    grid-template-columns: minmax(240px, 0.55fr) minmax(420px, 1.45fr);
 }
 
 .profile-overview,
-.requests-panel {
+.social-tabs-panel {
     align-self: start;
-}
-
-.friends-panel {
-    grid-row: span 2;
 }
 
 .panel-heading {
@@ -520,11 +516,63 @@ input {
     text-decoration: none;
 }
 
+.dashboard-tabs {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    border-bottom: 2px solid var(--line);
+    padding-bottom: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+
+.dashboard-tab {
+    min-height: 44px;
+    border: 2px solid var(--line);
+    background: var(--bg);
+    color: var(--fg);
+    padding: 0.55rem 0.8rem;
+    cursor: pointer;
+    font-weight: 900;
+}
+
+.dashboard-tab.active,
+.dashboard-tab:hover,
+.dashboard-tab:focus-visible {
+    background: var(--fg);
+    color: var(--bg);
+    outline: none;
+}
+
+.dashboard-tab span {
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.45rem;
+    min-height: 1.45rem;
+    margin-left: var(--space-1);
+    border: 2px solid currentColor;
+    font-size: 0.78rem;
+}
+
+.dashboard-panel {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.dashboard-panel[hidden] {
+    display: none;
+}
+
+.dashboard-search {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) auto;
+    gap: var(--space-3);
+    align-items: end;
+}
+
 .mini-avatar {
     position: relative;
-    width: 76px;
-    height: 104px;
-    border: 2px solid var(--line);
+    width: 92px;
+    height: 132px;
     background: var(--bg);
     flex: 0 0 auto;
 }
@@ -535,47 +583,57 @@ input {
 }
 
 .mini-head {
-    left: 26px;
-    top: 8px;
-    width: 24px;
-    height: 24px;
+    left: 29px;
+    top: 4px;
+    width: 34px;
+    height: 34px;
+    overflow: hidden;
+}
+
+.mini-head img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
 }
 
 .mini-torso {
-    left: 22px;
-    top: 34px;
-    width: 32px;
-    height: 38px;
+    left: 24px;
+    top: 38px;
+    width: 44px;
+    height: 48px;
 }
 
 .mini-left-arm,
 .mini-right-arm {
-    top: 34px;
-    width: 14px;
-    height: 38px;
+    top: 38px;
+    width: 18px;
+    height: 48px;
 }
 
 .mini-left-arm {
-    left: 8px;
+    left: 6px;
 }
 
 .mini-right-arm {
-    right: 8px;
+    right: 6px;
 }
 
 .mini-left-leg,
 .mini-right-leg {
-    top: 72px;
-    width: 16px;
-    height: 24px;
+    top: 86px;
+    width: 22px;
+    height: 38px;
 }
 
 .mini-left-leg {
-    left: 22px;
+    left: 24px;
 }
 
 .mini-right-leg {
-    left: 38px;
+    left: 46px;
 }
 
 .search-layout {
@@ -665,14 +723,13 @@ input {
         grid-template-columns: 1fr;
     }
 
-    .friends-panel,
-    .profile-friends-panel {
-        grid-row: auto;
-        grid-column: auto;
-    }
-
+    .dashboard-search,
     .stats-grid {
         grid-template-columns: 1fr;
+    }
+
+    .profile-friends-panel {
+        grid-column: auto;
     }
 }
 

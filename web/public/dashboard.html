@@ -15,7 +15,7 @@
             </a>
             <nav class="nav" aria-label="Primary">
                 <a href="/profile">Profile</a>
-                <a href="/search">Search</a>
+                <a href="/dashboard#search">Search</a>
                 <a href="/avatar">Avatar</a>
                 <button class="button danger" type="button" data-logout>Logout</button>
             </nav>
@@ -27,7 +27,6 @@
                     <p class="label">Dashboard</p>
                     <h1 class="page-title" data-welcome-heading>Welcome</h1>
                 </div>
-                <a class="button" href="/search">Find people</a>
             </div>
 
             <div class="status" data-dashboard-status aria-live="polite"></div>
@@ -38,32 +37,63 @@
                     <div data-profile-summary></div>
                 </article>
 
-                <article class="panel friends-panel">
-                    <div class="panel-heading">
-                        <div>
-                            <p class="label">Friends</p>
-                            <h2>Your friends</h2>
-                        </div>
-                        <a class="button secondary small" href="/search">Search</a>
+                <article class="panel social-tabs-panel">
+                    <div class="dashboard-tabs" role="tablist" aria-label="Dashboard sections">
+                        <button class="dashboard-tab active" type="button" role="tab" aria-selected="true" data-dashboard-tab="friends">
+                            Friends <span data-friends-count>0</span>
+                        </button>
+                        <button class="dashboard-tab" type="button" role="tab" aria-selected="false" data-dashboard-tab="requests">
+                            Requests <span data-requests-count>0</span>
+                        </button>
+                        <button class="dashboard-tab" type="button" role="tab" aria-selected="false" data-dashboard-tab="search">
+                            Search
+                        </button>
                     </div>
-                    <div class="user-grid" data-friends-list></div>
-                </article>
 
-                <article class="panel requests-panel">
-                    <div class="panel-heading">
-                        <div>
-                            <p class="label">Requests</p>
-                            <h2>Friend requests</h2>
+                    <section class="dashboard-panel active" role="tabpanel" data-dashboard-panel="friends">
+                        <div class="panel-heading">
+                            <div>
+                                <p class="label">Friends</p>
+                                <h2>Your friends</h2>
+                            </div>
                         </div>
-                    </div>
-                    <h3>Incoming</h3>
-                    <div class="stack-list" data-incoming-requests></div>
-                    <h3>Sent</h3>
-                    <div class="stack-list" data-outgoing-requests></div>
+                        <div class="user-grid" data-friends-list></div>
+                    </section>
+
+                    <section class="dashboard-panel" role="tabpanel" hidden data-dashboard-panel="requests">
+                        <div class="panel-heading">
+                            <div>
+                                <p class="label">Requests</p>
+                                <h2>Friend requests</h2>
+                            </div>
+                        </div>
+                        <h3>Incoming</h3>
+                        <div class="stack-list" data-incoming-requests></div>
+                        <h3>Sent</h3>
+                        <div class="stack-list" data-outgoing-requests></div>
+                    </section>
+
+                    <section class="dashboard-panel" role="tabpanel" hidden data-dashboard-panel="search">
+                        <div class="panel-heading">
+                            <div>
+                                <p class="label">People</p>
+                                <h2>Search players</h2>
+                            </div>
+                        </div>
+                        <form class="dashboard-search" data-dashboard-search-form>
+                            <label class="field" for="dashboard-people-search">
+                                <span>Username or user ID</span>
+                                <input class="input" id="dashboard-people-search" name="q" type="search" autocomplete="off" data-dashboard-search-input>
+                            </label>
+                            <button class="button" type="submit">Search people</button>
+                        </form>
+                        <div class="status" data-dashboard-search-status aria-live="polite"></div>
+                        <div class="user-grid" data-dashboard-search-results></div>
+                    </section>
                 </article>
             </section>
         </main>
     </div>
-    <script src="/app.js?v=social-1" defer></script>
+    <script src="/app.js?v=social-2" defer></script>
 </body>
 </html>

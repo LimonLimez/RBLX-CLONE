@@ -31,7 +31,7 @@ struct ConnectedPlayer {
     bool active;
     int userId = -1;
     std::string authToken;
-    std::chrono::steady_clock::time_point sessionStartedAt;
+    std::chrono::steady_clock::time_point lastPlaytimeReportedAt;
     std::vector<char> receiveBuffer; // Buffer for sticky packets
     rp3d::RigidBody* shadowBody; // Server-side physics body for player
     glm::vec3 headColor = glm::vec3(0.8f, 0.6f, 0.4f);
@@ -46,6 +46,7 @@ std::map<int, ConnectedPlayer> players;
 int nextPlayerId = 1;
 const char* WEB_SERVER_URL = "http://localhost:3000"; // Web server URL for token verification
 const float MAX_PLAYER_COORDINATE = 10000.0f;
+const int PLAYTIME_REPORT_INTERVAL_SECONDS = 60;
 
 // Server World State
 std::deque<Part> serverParts;
@@ -98,6 +99,30 @@ void copyFixedString(char* destination, size_t destinationSize, const std::strin
     std::memset(destination, 0, destinationSize);
     const size_t bytesToCopy = std::min(destinationSize - 1, value.size());
     std::memcpy(destination, value.data(), bytesToCopy);
+}
+
+void reportPlayerPlaytime(ConnectedPlayer& player, std::chrono::steady_clock::time_point now, int playerId, bool force) {
+    if (!player.active || player.userId <= 0 || player.authToken.empty()) {
+        return;
+    }
+
+    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        now - player.lastPlaytimeReportedAt
+    ).count();
+
+    if (!force && elapsed < PLAYTIME_REPORT_INTERVAL_SECONDS) {
+        return;
+    }
+
+    const int playtimeSeconds = force ? std::max(1, static_cast<int>(elapsed)) : static_cast<int>(elapsed);
+    if (playtimeSeconds <= 0) {
+        return;
+    }
+
+    if (!ServerAuth::recordPlaytime(player.authToken, playtimeSeconds, WEB_SERVER_URL)) {
+        std::cerr << "Could not record playtime for player " << playerId << std::endl;
+    }
+    player.lastPlaytimeReportedAt = now;
 }
 
 void broadcast(const void* data, int size, int excludeId = -1) {
@@ -332,6 +357,7 @@ int main() {
         for (auto& [id, player] : players) {
             if (player.active) {
                 updatePlayerShadowBody(player);
+                reportPlayerPlaytime(player, std::chrono::steady_clock::now(), id, false);
             }
         }
 
@@ -405,7 +431,7 @@ int main() {
 
                             player.userId = verified.userId;
                             player.authToken = token;
-                            player.sessionStartedAt = std::chrono::steady_clock::now();
+                            player.lastPlaytimeReportedAt = std::chrono::steady_clock::now();
                             copyFixedString(player.username, sizeof(player.username), verified.username);
 
                             std::string avatarJson = ServerAuth::getAvatar(token, WEB_SERVER_URL);
@@ -563,14 +589,7 @@ int main() {
 
             if (players[id].active) {
                 if (players[id].userId > 0 && !players[id].authToken.empty()) {
-                    const auto now = std::chrono::steady_clock::now();
-                    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                        now - players[id].sessionStartedAt
-                    ).count();
-                    const int playtimeSeconds = std::max(1, static_cast<int>(elapsed));
-                    if (!ServerAuth::recordPlaytime(players[id].authToken, playtimeSeconds, WEB_SERVER_URL)) {
-                        std::cerr << "Could not record playtime for player " << id << std::endl;
-                    }
+                    reportPlayerPlaytime(players[id], std::chrono::steady_clock::now(), id, true);
                 }
 
                 players[id].active = false;

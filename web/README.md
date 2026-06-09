@@ -41,3 +41,5 @@ Copy `.env.example` to `.env` for local overrides. Do not commit `.env`.
 - `POST /api/friends/remove` with `Authorization: Bearer <token>` and `{ "userId": 2 }`.
 
 Avatar tokens are not accepted in query strings. `/api/verify` has a deprecated body-token fallback for older callers.
+
+The Windows game server uses `/api/me/playtime` to add authenticated session time during play and on disconnect.

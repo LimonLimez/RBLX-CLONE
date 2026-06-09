@@ -1,4 +1,5 @@
 const tokenKey = 'authToken';
+const faceTextureUrl = '/face.png';
 
 function getToken() {
     return localStorage.getItem(tokenKey);
@@ -111,6 +112,13 @@ function createMiniAvatar(avatar) {
         const part = document.createElement('span');
         part.className = className;
         part.style.background = colorToCss(color);
+        if (className === 'mini-head') {
+            const face = document.createElement('img');
+            face.src = faceTextureUrl;
+            face.alt = '';
+            face.decoding = 'async';
+            part.appendChild(face);
+        }
         figure.appendChild(part);
     }
 
@@ -247,7 +255,7 @@ function createUserCard(user, onChanged) {
 
     const meta = document.createElement('p');
     meta.className = 'user-meta';
-    meta.textContent = `ID ${user.id} · ${user.friendCount} friend${user.friendCount === 1 ? '' : 's'} · ${formatPlaytime(user.stats?.playtimeSeconds)} played`;
+    meta.textContent = `ID ${user.id} - ${user.friendCount} friend${user.friendCount === 1 ? '' : 's'} - ${formatPlaytime(user.stats?.playtimeSeconds)} played`;
 
     const relation = document.createElement('p');
     relation.className = 'relationship-label';
@@ -355,6 +363,85 @@ function initDashboard() {
     const incomingList = document.querySelector('[data-incoming-requests]');
     const outgoingList = document.querySelector('[data-outgoing-requests]');
     const status = document.querySelector('[data-dashboard-status]');
+    const tabButtons = [...document.querySelectorAll('[data-dashboard-tab]')];
+    const tabPanels = [...document.querySelectorAll('[data-dashboard-panel]')];
+    const friendsCount = document.querySelector('[data-friends-count]');
+    const requestsCount = document.querySelector('[data-requests-count]');
+    const searchForm = document.querySelector('[data-dashboard-search-form]');
+    const searchInput = document.querySelector('[data-dashboard-search-input]');
+    const searchResults = document.querySelector('[data-dashboard-search-results]');
+    const searchStatus = document.querySelector('[data-dashboard-search-status]');
+    let socialReload = null;
+    let lastSearchQuery = '';
+
+    function setTab(tabName, updateHash = true) {
+        const nextTab = tabPanels.some((panel) => panel.dataset.dashboardPanel === tabName) ? tabName : 'friends';
+
+        for (const button of tabButtons) {
+            const active = button.dataset.dashboardTab === nextTab;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-selected', active ? 'true' : 'false');
+        }
+
+        for (const panel of tabPanels) {
+            const active = panel.dataset.dashboardPanel === nextTab;
+            panel.classList.toggle('active', active);
+            panel.hidden = !active;
+        }
+
+        if (updateHash) {
+            const nextUrl = nextTab === 'friends'
+                ? `${window.location.pathname}${window.location.search}`
+                : `${window.location.pathname}${window.location.search}#${nextTab}`;
+            window.history.replaceState(null, '', nextUrl);
+        }
+
+        if (nextTab === 'search' && searchResults && !searchResults.dataset.loaded) {
+            loadDashboardSearch('').catch((error) => {
+                setStatus(searchStatus, error.message || 'Search failed.', 'error');
+            });
+        }
+    }
+
+    async function loadDashboardSearch(query) {
+        if (!searchResults) return;
+        lastSearchQuery = query || '';
+        searchResults.dataset.loaded = 'true';
+        setStatus(searchStatus, '', '');
+        searchResults.innerHTML = '';
+        searchResults.appendChild(emptyMessage('Searching people'));
+
+        const { response, data } = await getJson(`/api/users/search?q=${encodeURIComponent(lastSearchQuery)}`, getToken());
+        if (!response.ok || !data.success) throw new Error(data.error || 'Search failed.');
+
+        renderUserList(
+            searchResults,
+            data.users,
+            lastSearchQuery ? `No people found for "${lastSearchQuery}".` : 'No other people have signed up yet.',
+            async () => {
+                if (socialReload) await socialReload();
+                await loadDashboardSearch(lastSearchQuery);
+            }
+        );
+    }
+
+    tabButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            setTab(button.dataset.dashboardTab);
+        });
+    });
+
+    window.addEventListener('hashchange', () => {
+        setTab(window.location.hash.replace('#', ''), false);
+    });
+
+    searchForm?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        setTab('search');
+        loadDashboardSearch(searchInput.value.trim()).catch((error) => {
+            setStatus(searchStatus, error.message || 'Search failed.', 'error');
+        });
+    });
 
     verifySession()
         .then(async (session) => {
@@ -369,6 +456,9 @@ function initDashboard() {
                 const { response, data } = await getJson('/api/me/social', getToken());
                 if (!response.ok || !data.success) throw new Error(data.error || 'Could not load friends.');
 
+                if (friendsCount) friendsCount.textContent = String(data.friends.length);
+                if (requestsCount) requestsCount.textContent = String(data.incomingRequests.length + data.outgoingRequests.length);
+
                 if (profileSummary) {
                     profileSummary.innerHTML = '';
                     const profile = document.createElement('div');
@@ -379,7 +469,7 @@ function initDashboard() {
                     const name = document.createElement('h2');
                     name.textContent = data.profile.username;
                     const meta = document.createElement('p');
-                    meta.textContent = `${data.profile.friendCount} friend${data.profile.friendCount === 1 ? '' : 's'} · ${formatPlaytime(data.profile.stats.playtimeSeconds)} played`;
+                    meta.textContent = `${data.profile.friendCount} friend${data.profile.friendCount === 1 ? '' : 's'} - ${formatPlaytime(data.profile.stats.playtimeSeconds)} played`;
                     const link = document.createElement('a');
                     link.className = 'button small';
                     link.href = profileHref(data.profile);
@@ -389,12 +479,14 @@ function initDashboard() {
                     profileSummary.appendChild(profile);
                 }
 
-                renderUserList(friendsList, data.friends, 'No friends yet. Search for people to add.', loadSocial);
+                renderUserList(friendsList, data.friends, 'No friends yet. Open Search and add someone.', loadSocial);
                 renderUserList(incomingList, data.incomingRequests, 'No friend requests right now.', loadSocial);
                 renderUserList(outgoingList, data.outgoingRequests, 'No sent requests.', loadSocial);
             }
 
+            socialReload = loadSocial;
             await loadSocial();
+            setTab(window.location.hash.replace('#', ''), false);
         })
         .catch((error) => {
             setStatus(status, error.message || 'Could not load dashboard.', 'error');
@@ -601,6 +693,10 @@ async function createAvatarPreview(container, onSelect) {
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const meshes = new Map();
+    const faceTexture = await new THREE.TextureLoader().loadAsync(faceTextureUrl).catch(() => null);
+    if (faceTexture) {
+        faceTexture.colorSpace = THREE.SRGBColorSpace;
+    }
 
     renderer.setClearColor(0xffffff, 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -608,6 +704,7 @@ async function createAvatarPreview(container, onSelect) {
     renderer.domElement.className = 'avatar-canvas';
     renderer.domElement.setAttribute('aria-label', 'Drag to rotate avatar preview');
     renderer.domElement.setAttribute('role', 'img');
+    renderer.domElement.dataset.faceTexture = faceTexture ? 'loaded' : 'missing';
 
     scene.background = new THREE.Color(0xffffff);
     scene.add(root);
@@ -627,6 +724,21 @@ async function createAvatarPreview(container, onSelect) {
         mesh.userData.partKey = block.key;
         mesh.userData.edge = edge;
         mesh.add(edge);
+
+        if (block.id === 'head' && faceTexture) {
+            const face = new THREE.Mesh(
+                new THREE.PlaneGeometry(block.size[0] * 0.82, block.size[1] * 0.82),
+                new THREE.MeshBasicMaterial({
+                    map: faceTexture,
+                    transparent: true,
+                    alphaTest: 0.08,
+                    depthWrite: false
+                })
+            );
+            face.position.set(0, 0, block.size[2] * 0.5 + 0.012);
+            mesh.add(face);
+        }
+
         root.add(mesh);
         meshes.set(block.id, mesh);
     }

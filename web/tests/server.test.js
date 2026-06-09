@@ -181,12 +181,18 @@ test('social profiles support search, friend requests, friends, and playtime', a
         assert.equal(playtime.response.status, 200);
         assert.equal(playtime.json.profile.stats.playtimeSeconds, 3661);
 
+        const playtimeChunk = await request(baseUrl, 'POST', '/api/me/playtime', {
+            seconds: 60
+        }, bob.token);
+        assert.equal(playtimeChunk.response.status, 200);
+        assert.equal(playtimeChunk.json.profile.stats.playtimeSeconds, 3721);
+
         const search = await request(baseUrl, 'GET', '/api/users/search?q=Bob', undefined, alice.token);
         assert.equal(search.response.status, 200);
         assert.equal(search.json.users.length, 1);
         assert.equal(search.json.users[0].username, 'BobBuilder');
         assert.equal(search.json.users[0].relationship, 'none');
-        assert.equal(search.json.users[0].stats.playtimeSeconds, 3661);
+        assert.equal(search.json.users[0].stats.playtimeSeconds, 3721);
 
         const requestFriend = await request(baseUrl, 'POST', '/api/friends/request', {
             userId: bob.userId
@@ -218,7 +224,7 @@ test('social profiles support search, friend requests, friends, and playtime', a
         assert.equal(bobProfile.json.profile.username, 'BobBuilder');
         assert.equal(bobProfile.json.profile.relationship, 'friends');
         assert.equal(bobProfile.json.profile.friendCount, 1);
-        assert.equal(bobProfile.json.profile.stats.playtimeSeconds, 3661);
+        assert.equal(bobProfile.json.profile.stats.playtimeSeconds, 3721);
         assert.equal(bobProfile.json.friends.length, 1);
         assert.equal(bobProfile.json.friends[0].username, 'AlicePlayer');
 

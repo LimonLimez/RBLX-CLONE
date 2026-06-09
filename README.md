@@ -139,6 +139,8 @@ Profiles and friends:
 
 Tokens are no longer accepted in avatar URLs. `/api/verify` still accepts a body token as a deprecated compatibility fallback, but new callers should use the Authorization header.
 
+The game server reports authenticated player sessions to `/api/me/playtime` while a player is connected and once more when the player disconnects.
+
 ## Studio Controls
 
 - Right mouse drag: look around.
