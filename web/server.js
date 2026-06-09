@@ -261,6 +261,7 @@ function createApp(options = {}) {
     app.use(requireJsonBody);
     app.use(express.json({ limit: config.jsonBodyLimit }));
     app.use(express.static(path.join(__dirname, 'public')));
+    app.use('/vendor/three', express.static(path.dirname(require.resolve('three'))));
 
     const authLimiter = rateLimit({
         windowMs: config.authRateLimitWindowMs,

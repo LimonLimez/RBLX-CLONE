@@ -15,8 +15,7 @@
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.2",
-    "sqlite3": "^6.0.1"
+    "sqlite3": "^6.0.1",
+    "three": "^0.181.2"
   }
 }
-
-

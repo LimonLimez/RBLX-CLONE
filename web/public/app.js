@@ -158,17 +158,17 @@ const defaultAvatar = {
     rightLegColor: [0.2, 0.6, 0.2]
 };
 
-const avatarLayout = {
-    head: [38, 14, 24, 18],
-    torso: [35, 32, 30, 30],
-    leftArm: [20, 32, 15, 30],
-    rightArm: [65, 32, 15, 30],
-    leftLeg: [35, 62, 14, 28],
-    rightLeg: [51, 62, 14, 28]
-};
+const avatarBlocks = [
+    { id: 'head', label: 'Head', key: 'headColor', size: [1.2, 1.2, 1.0], position: [0, 4.8, 0] },
+    { id: 'torso', label: 'Torso', key: 'torsoColor', size: [2.0, 2.4, 1.0], position: [0, 3.0, 0] },
+    { id: 'leftArm', label: 'Left arm', key: 'leftArmColor', size: [0.85, 2.4, 1.0], position: [-1.425, 3.0, 0] },
+    { id: 'rightArm', label: 'Right arm', key: 'rightArmColor', size: [0.85, 2.4, 1.0], position: [1.425, 3.0, 0] },
+    { id: 'leftLeg', label: 'Left leg', key: 'leftLegColor', size: [1.0, 1.8, 1.0], position: [-0.5, 0.9, 0] },
+    { id: 'rightLeg', label: 'Right leg', key: 'rightLegColor', size: [1.0, 1.8, 1.0], position: [0.5, 0.9, 0] }
+];
 
-function rgb(color) {
-    return `rgb(${color.map((value) => Math.round(value * 255)).join(', ')})`;
+function threeColor(color) {
+    return color.map((value) => Math.round(value * 255) / 255);
 }
 
 function colorToHex(color) {
@@ -182,6 +182,205 @@ function hexToColor(hex) {
         parseInt(value.slice(2, 4), 16) / 255,
         parseInt(value.slice(4, 6), 16) / 255
     ];
+}
+
+async function createAvatarPreview(container, onSelect) {
+    const THREE = await import('/vendor/three/three.module.js');
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera();
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+    const root = new THREE.Group();
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const meshes = new Map();
+
+    renderer.setClearColor(0xffffff, 1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = false;
+    renderer.domElement.className = 'avatar-canvas';
+    renderer.domElement.setAttribute('aria-label', 'Drag to rotate avatar preview');
+    renderer.domElement.setAttribute('role', 'img');
+
+    scene.background = new THREE.Color(0xffffff);
+    scene.add(root);
+    root.rotation.set(-0.08, -0.35, 0);
+
+    for (const block of avatarBlocks) {
+        const geometry = new THREE.BoxGeometry(...block.size);
+        const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const mesh = new THREE.Mesh(geometry, material);
+        const edge = new THREE.LineSegments(
+            new THREE.EdgesGeometry(geometry),
+            new THREE.LineBasicMaterial({ color: 0x050505 })
+        );
+
+        mesh.position.set(...block.position);
+        mesh.userData.partId = block.id;
+        mesh.userData.partKey = block.key;
+        mesh.userData.edge = edge;
+        mesh.add(edge);
+        root.add(mesh);
+        meshes.set(block.id, mesh);
+    }
+
+    container.replaceChildren(renderer.domElement);
+
+    function updateCanvasProbe() {
+        const gl = renderer.getContext();
+        const width = renderer.domElement.width;
+        const height = renderer.domElement.height;
+        const readWidth = Math.min(140, width);
+        const readHeight = Math.min(140, height);
+        const x = Math.floor((width - readWidth) / 2);
+        const y = Math.floor((height - readHeight) / 2);
+        const pixels = new Uint8Array(readWidth * readHeight * 4);
+        let nonWhite = 0;
+        let colored = 0;
+        let hash = 0;
+
+        gl.readPixels(x, y, readWidth, readHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        for (let index = 0; index < pixels.length; index += 4) {
+            const red = pixels[index];
+            const green = pixels[index + 1];
+            const blue = pixels[index + 2];
+            if (red < 245 || green < 245 || blue < 245) nonWhite += 1;
+            if (Math.max(red, green, blue) - Math.min(red, green, blue) > 25) colored += 1;
+            hash = (hash + ((index + 1) * (red + 3 * green + 7 * blue + 11 * pixels[index + 3]))) % 1000000007;
+        }
+
+        renderer.domElement.dataset.nonWhitePixels = String(nonWhite);
+        renderer.domElement.dataset.coloredPixels = String(colored);
+        renderer.domElement.dataset.renderHash = String(hash);
+    }
+
+    function render() {
+        renderer.render(scene, camera);
+        renderer.domElement.dataset.rotationX = root.rotation.x.toFixed(4);
+        renderer.domElement.dataset.rotationY = root.rotation.y.toFixed(4);
+        updateCanvasProbe();
+    }
+
+    function resize() {
+        const width = Math.max(240, container.clientWidth);
+        const height = Math.max(300, container.clientHeight);
+        const aspect = width / height;
+        const viewHeight = 6.4;
+
+        camera.left = -viewHeight * aspect * 0.5;
+        camera.right = viewHeight * aspect * 0.5;
+        camera.top = viewHeight * 0.5;
+        camera.bottom = -viewHeight * 0.5;
+        camera.near = -20;
+        camera.far = 20;
+        camera.position.set(0, 2.65, 8);
+        camera.lookAt(0, 2.65, 0);
+        camera.updateProjectionMatrix();
+
+        renderer.setSize(width, height, false);
+        render();
+    }
+
+    function update(avatar, selected) {
+        for (const block of avatarBlocks) {
+            const mesh = meshes.get(block.id);
+            mesh.material.color.setRGB(...threeColor(avatar[block.key]));
+        }
+        render();
+    }
+
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(container);
+    resize();
+
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+    let startRotationX = 0;
+    let startRotationY = 0;
+    let pointerDragActive = false;
+
+    function setPointer(event) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    }
+
+    function hitTest(event) {
+        setPointer(event);
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObjects([...meshes.values()], false);
+        return hits.length > 0 ? hits[0].object.userData.partId : '';
+    }
+
+    function beginDrag(clientX, clientY) {
+        dragging = true;
+        moved = false;
+        startX = clientX;
+        startY = clientY;
+        startRotationX = root.rotation.x;
+        startRotationY = root.rotation.y;
+    }
+
+    function moveDrag(clientX, clientY) {
+        if (!dragging) return;
+
+        const deltaX = clientX - startX;
+        const deltaY = clientY - startY;
+        moved = moved || Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3;
+        root.rotation.y = startRotationY + deltaX * 0.01;
+        root.rotation.x = Math.max(-0.65, Math.min(0.65, startRotationX + deltaY * 0.008));
+        render();
+    }
+
+    function endDrag(event) {
+        dragging = false;
+        if (moved) return;
+
+        const partId = hitTest(event);
+        if (partId) onSelect(partId);
+    }
+
+    renderer.domElement.addEventListener('pointerdown', (event) => {
+        pointerDragActive = true;
+        beginDrag(event.clientX, event.clientY);
+        renderer.domElement.setPointerCapture(event.pointerId);
+    });
+
+    renderer.domElement.addEventListener('pointermove', (event) => {
+        moveDrag(event.clientX, event.clientY);
+    });
+
+    renderer.domElement.addEventListener('pointerup', (event) => {
+        if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+            renderer.domElement.releasePointerCapture(event.pointerId);
+        }
+        endDrag(event);
+        pointerDragActive = false;
+    });
+
+    renderer.domElement.addEventListener('pointercancel', () => {
+        dragging = false;
+        pointerDragActive = false;
+    });
+
+    renderer.domElement.addEventListener('mousedown', (event) => {
+        if (pointerDragActive) return;
+        event.preventDefault();
+        beginDrag(event.clientX, event.clientY);
+    });
+
+    window.addEventListener('mousemove', (event) => {
+        if (pointerDragActive || !dragging) return;
+        moveDrag(event.clientX, event.clientY);
+    });
+
+    window.addEventListener('mouseup', (event) => {
+        if (pointerDragActive || !dragging) return;
+        endDrag(event);
+    });
+
+    return { update };
 }
 
 function initAvatar() {
@@ -201,6 +400,7 @@ function initAvatar() {
     const colorPicker = document.querySelector('[data-color-picker]');
     const colorCode = document.querySelector('[data-color-code]');
     const status = document.querySelector('[data-status]');
+    let preview = null;
 
     function selectedKey() {
         return avatarParts.find(([id]) => id === selected)[2];
@@ -212,22 +412,8 @@ function initAvatar() {
         colorCode.value = hex.toUpperCase();
     }
 
-    function drawAvatar() {
-        figure.innerHTML = '';
-        for (const [id, label, key] of avatarParts) {
-            const [left, top, width, height] = avatarLayout[id];
-            const part = document.createElement('button');
-            part.type = 'button';
-            part.className = `body-part${id === selected ? ' selected' : ''}`;
-            part.style.left = `${left}%`;
-            part.style.top = `${top}%`;
-            part.style.width = `${width}%`;
-            part.style.height = `${height}%`;
-            part.style.background = rgb(avatar[key]);
-            part.setAttribute('aria-label', label);
-            part.addEventListener('click', () => selectPart(id));
-            figure.appendChild(part);
-        }
+    function syncPreview() {
+        if (preview) preview.update(avatar, selected);
     }
 
     function drawTabs() {
@@ -244,18 +430,27 @@ function initAvatar() {
 
     function selectPart(id) {
         selected = id;
-        drawAvatar();
         drawTabs();
         syncColorPicker();
+        syncPreview();
     }
 
     function updateSelectedColor() {
         avatar[selectedKey()] = hexToColor(colorPicker.value);
-        drawAvatar();
         syncColorPicker();
+        syncPreview();
     }
 
     colorPicker.addEventListener('input', updateSelectedColor);
+
+    createAvatarPreview(figure, selectPart)
+        .then((createdPreview) => {
+            preview = createdPreview;
+            syncPreview();
+        })
+        .catch(() => {
+            setStatus(status, '3D preview could not load.', 'error');
+        });
 
     document.querySelector('[data-save-avatar]').addEventListener('click', async () => {
         const button = document.querySelector('[data-save-avatar]');
