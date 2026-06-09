@@ -161,12 +161,12 @@ const defaultAvatar = {
 };
 
 const avatarLayout = {
-    head: [38, 10, 24, 18],
-    torso: [32, 34, 36, 28],
-    leftArm: [20, 34, 12, 28],
-    rightArm: [68, 34, 12, 28],
-    leftLeg: [36, 68, 12, 26],
-    rightLeg: [52, 68, 12, 26]
+    head: [38, 14, 24, 18],
+    torso: [32, 32, 36, 30],
+    leftArm: [20, 32, 12, 30],
+    rightArm: [68, 32, 12, 30],
+    leftLeg: [36, 62, 13, 28],
+    rightLeg: [51, 62, 13, 28]
 };
 
 function rgb(color) {
