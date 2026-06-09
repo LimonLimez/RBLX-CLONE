@@ -182,26 +182,9 @@ int main() {
             lastFrame = currentFrame;
 
             window.pollEvents();
-            processCameraInput(window, camera, deltaTime);
-
-            GLFWwindow* nativeWindow = window.getNativeWindow();
-            if (glfwGetMouseButton(nativeWindow, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-                double mouseX = 0.0;
-                double mouseY = 0.0;
-                glfwGetCursorPos(nativeWindow, &mouseX, &mouseY);
-                if (firstMouse) {
-                    lastMouseX = mouseX;
-                    lastMouseY = mouseY;
-                    firstMouse = false;
-                }
-                camera.ProcessMouseMovement(static_cast<float>(mouseX - lastMouseX), static_cast<float>(lastMouseY - mouseY));
-                lastMouseX = mouseX;
-                lastMouseY = mouseY;
-            } else {
-                firstMouse = true;
-            }
 
             editor.newFrame();
+            GLFWwindow* nativeWindow = window.getNativeWindow();
 
             if (ImGui::BeginMainMenuBar()) {
                 if (ImGui::BeginMenu("File")) {
@@ -286,17 +269,28 @@ int main() {
             ImGui::End();
 
             ImGuiIO& io = ImGui::GetIO();
-            bool leftPressed = glfwGetMouseButton(nativeWindow, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-            if (leftPressed && !wasLeftPressed && !io.WantCaptureMouse && !ImGuizmo::IsOver()) {
+            const bool gizmoInUse = ImGuizmo::IsUsing();
+            if (!gizmoInUse && !io.WantCaptureKeyboard) {
+                processCameraInput(window, camera, deltaTime);
+            }
+
+            if (!gizmoInUse && !io.WantCaptureMouse && glfwGetMouseButton(nativeWindow, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
                 double mouseX = 0.0;
                 double mouseY = 0.0;
                 glfwGetCursorPos(nativeWindow, &mouseX, &mouseY);
-                int picked = Raycaster::GetPartFromMouse(parts, camera, static_cast<float>(mouseX), static_cast<float>(mouseY), static_cast<float>(window.getWidth()), static_cast<float>(window.getHeight()));
-                if (picked >= 0 && picked < static_cast<int>(parts.size())) {
-                    selectedPart = picked;
+                if (firstMouse) {
+                    lastMouseX = mouseX;
+                    lastMouseY = mouseY;
+                    firstMouse = false;
                 }
+                camera.ProcessMouseMovement(static_cast<float>(mouseX - lastMouseX), static_cast<float>(lastMouseY - mouseY));
+                lastMouseX = mouseX;
+                lastMouseY = mouseY;
+            } else {
+                firstMouse = true;
             }
-            wasLeftPressed = leftPressed;
+
+            bool leftPressed = glfwGetMouseButton(nativeWindow, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
             glm::vec3 lightPos(20.0f, 50.0f, 20.0f);
             glm::mat4 lightSpaceMatrix = shadowMap.getLightSpaceMatrix(lightPos);
@@ -332,8 +326,8 @@ int main() {
                 glm::mat4 model = partToMatrix(part);
 
                 ImGuizmo::SetOrthographic(false);
-                ImGuizmo::SetDrawlist();
-                ImGuizmo::SetRect(0.0f, 0.0f, static_cast<float>(window.getWidth()), static_cast<float>(window.getHeight()));
+                const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+                ImGuizmo::SetRect(mainViewport->Pos.x, mainViewport->Pos.y, mainViewport->Size.x, mainViewport->Size.y);
 
                 const float* snapValues = snapEnabled ? snap : nullptr;
                 if (ImGuizmo::Manipulate(
@@ -349,6 +343,17 @@ int main() {
                     applyMatrixToPart(model, part, physicsWorld, operation == ImGuizmo::SCALE);
                 }
             }
+
+            if (leftPressed && !wasLeftPressed && !io.WantCaptureMouse && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver()) {
+                double mouseX = 0.0;
+                double mouseY = 0.0;
+                glfwGetCursorPos(nativeWindow, &mouseX, &mouseY);
+                int picked = Raycaster::GetPartFromMouse(parts, camera, static_cast<float>(mouseX), static_cast<float>(mouseY), static_cast<float>(window.getWidth()), static_cast<float>(window.getHeight()));
+                if (picked >= 0 && picked < static_cast<int>(parts.size())) {
+                    selectedPart = picked;
+                }
+            }
+            wasLeftPressed = leftPressed;
 
             editor.render();
             window.swapBuffers();
