@@ -2,11 +2,30 @@
 #include <cmath>
 #include <iostream>
 
+namespace {
+    float normalizeDegrees(float angle) {
+        if (!std::isfinite(angle)) {
+            return 0.0f;
+        }
+
+        angle = std::fmod(angle, 360.0f);
+        if (angle > 180.0f) angle -= 360.0f;
+        if (angle < -180.0f) angle += 360.0f;
+        return angle;
+    }
+}
+
 Character::Character(glm::vec3 startPos, PhysicsWorld* physicsWorld, std::deque<Part>* partsList,
                      const glm::vec3& headColor, const glm::vec3& torsoColor,
                      const glm::vec3& leftArmColor, const glm::vec3& rightArmColor,
                      const glm::vec3& leftLegColor, const glm::vec3& rightLegColor)
-    : physicsWorld(physicsWorld), partsList(partsList), walkTime(0.0f), isWalking(false), isJumping(false), zoomDistance(15.0f), internalYaw(0.0f), health(100.0f), maxHealth(100.0f), spawnPoint(startPos), isRemote(false), hasReceivedFirstRotation(false) {
+    : isRemote(false), isJumping(false), debugTargetYaw(0.0f), debugCurrentYaw(0.0f),
+      debugMoveDir(0.0f), health(100.0f), maxHealth(100.0f),
+      physicsWorld(physicsWorld), partsList(partsList), spawnPoint(startPos),
+      headIndex(-1), torsoIndex(-1), leftArmIndex(-1), rightArmIndex(-1),
+      leftLegIndex(-1), rightLegIndex(-1), walkTime(0.0f), isWalking(false),
+      zoomDistance(15.0f), internalYaw(0.0f), hasReceivedFirstRotation(false),
+      rootPartIndex(-1) {
     
     // Create Folder "Player"
     Part playerFolder;
@@ -84,6 +103,36 @@ void Character::setFaceTexture(unsigned int textureId) {
     (*partsList)[headIndex].textureId = textureId;
 }
 
+void Character::setRemoteControlled(bool remote) {
+    isRemote = remote;
+    if (!partsList || rootPartIndex < 0 || rootPartIndex >= static_cast<int>(partsList->size())) {
+        return;
+    }
+
+    Part& root = (*partsList)[rootPartIndex];
+    if (root.deleted || !root.physicsBody) {
+        return;
+    }
+
+    rp3d::RigidBody* body = static_cast<rp3d::RigidBody*>(root.physicsBody);
+    if (remote) {
+        root.canCollide = false;
+        body->setType(rp3d::BodyType::KINEMATIC);
+        body->setLinearVelocity(rp3d::Vector3(0, 0, 0));
+        body->setAngularVelocity(rp3d::Vector3(0, 0, 0));
+        if (body->getNbColliders() > 0) {
+            body->getCollider(0)->setCollideWithMaskBits(0);
+        }
+        return;
+    }
+
+    root.canCollide = true;
+    body->setType(root.anchored ? rp3d::BodyType::STATIC : rp3d::BodyType::DYNAMIC);
+    if (body->getNbColliders() > 0) {
+        body->getCollider(0)->setCollideWithMaskBits(0xFFFF);
+    }
+}
+
 void Character::setRemoteState(glm::vec3 pos, float yaw, bool walking, bool jumping) {
     if (!isRemote) return;
     if (partsList && rootPartIndex >= 0 && rootPartIndex < partsList->size()) {
@@ -94,10 +143,7 @@ void Character::setRemoteState(glm::vec3 pos, float yaw, bool walking, bool jump
         float lerpFactor = 0.8f; // 80% per update for smooth, responsive movement
         root.position = glm::mix(root.position, pos, lerpFactor);
         
-        // Normalize target yaw to [-180, 180]
-        float targetYaw = yaw;
-        while (targetYaw > 180.0f) targetYaw -= 360.0f;
-        while (targetYaw < -180.0f) targetYaw += 360.0f;
+        float targetYaw = normalizeDegrees(yaw);
         
         // On first rotation update, snap immediately to avoid wrong angle
         if (!hasReceivedFirstRotation) {
@@ -106,21 +152,11 @@ void Character::setRemoteState(glm::vec3 pos, float yaw, bool walking, bool jump
             hasReceivedFirstRotation = true;
         } else {
             // Use internalYaw for smooth interpolation (matches local character behavior)
-            float currentYaw = internalYaw;
-            
-            // Normalize current yaw
-            while (currentYaw > 180.0f) currentYaw -= 360.0f;
-            while (currentYaw < -180.0f) currentYaw += 360.0f;
-            
-            float diff = targetYaw - currentYaw;
-            // Take shortest path
-            if (diff > 180.0f) diff -= 360.0f;
-            if (diff < -180.0f) diff += 360.0f;
+            float currentYaw = normalizeDegrees(internalYaw);
+            float diff = normalizeDegrees(targetYaw - currentYaw);
             
             // Update internalYaw (matches local character)
-            internalYaw = currentYaw + diff * lerpFactor;
-            while (internalYaw > 180.0f) internalYaw -= 360.0f;
-            while (internalYaw < -180.0f) internalYaw += 360.0f;
+            internalYaw = normalizeDegrees(currentYaw + diff * lerpFactor);
             
             // Set root rotation to match internalYaw (matches local character)
             root.rotation.y = internalYaw;
@@ -329,30 +365,21 @@ void Character::processInput(bool forward, bool backward, bool left, bool right,
         // Calculate target yaw from movement direction
         // atan2(x, z) gives angle in XZ plane, convert to degrees
         float angleRad = atan2(moveDir.x, moveDir.z);
-        float targetYaw = glm::degrees(angleRad);
-        
-        // Normalize to [-180, 180]
-        while (targetYaw > 180.0f) targetYaw -= 360.0f;
-        while (targetYaw < -180.0f) targetYaw += 360.0f;
-        
-        float currentYaw = internalYaw;
+        float targetYaw = normalizeDegrees(glm::degrees(angleRad));
+        float currentYaw = normalizeDegrees(internalYaw);
         
         debugTargetYaw = targetYaw;
         debugCurrentYaw = currentYaw;
         debugMoveDir = moveDir;
 
         // Fast rotation towards movement direction
-        float diff = targetYaw - currentYaw;
-        while (diff > 180.0f) diff -= 360.0f;
-        while (diff < -180.0f) diff += 360.0f;
+        float diff = normalizeDegrees(targetYaw - currentYaw);
         
         // Faster rotation for more responsive feel
         float lerpFactor = 15.0f; 
         float step = diff * lerpFactor * deltaTime; 
         
-        internalYaw += step;
-        while (internalYaw > 180.0f) internalYaw -= 360.0f;
-        while (internalYaw < -180.0f) internalYaw += 360.0f;
+        internalYaw = normalizeDegrees(internalYaw + step);
 
         body->setAngularVelocity(rp3d::Vector3(0, 0, 0));
 
@@ -360,6 +387,8 @@ void Character::processInput(bool forward, bool backward, bool left, bool right,
         rp3d::Vector3 currentVel = body->getLinearVelocity();
         body->setLinearVelocity(rp3d::Vector3(0, currentVel.y, 0));
         body->setAngularVelocity(rp3d::Vector3(0, 0, 0));
+        debugCurrentYaw = internalYaw;
+        debugTargetYaw = internalYaw;
         debugMoveDir = glm::vec3(0.0f); // Clear move dir to stop animation state
     }
     

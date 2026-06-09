@@ -47,13 +47,30 @@ struct ConnectedPlayer {
 
 std::map<int, ConnectedPlayer> players;
 int nextPlayerId = 1;
-const char* WEB_SERVER_URL = "http://localhost:3000"; // Web server URL for token verification
+std::string webServerUrl = "http://localhost:3000"; // Web server URL for token verification
 const float MAX_PLAYER_COORDINATE = 10000.0f;
+const float MAX_PLAYER_ROTATION_DEGREES = 100000.0f;
 const int PLAYTIME_REPORT_INTERVAL_SECONDS = 60;
 
 // Server World State
 std::deque<Part> serverParts;
 PhysicsWorld serverPhysicsWorld;
+
+void parseServerArguments(int argc, char** argv, int& serverPort, std::string& worldPath) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--port" && i + 1 < argc) {
+            int parsed = std::atoi(argv[++i]);
+            if (parsed > 0 && parsed <= 65535) {
+                serverPort = parsed;
+            }
+        } else if (arg == "--world" && i + 1 < argc) {
+            worldPath = argv[++i];
+        } else if (arg == "--web" && i + 1 < argc) {
+            webServerUrl = argv[++i];
+        }
+    }
+}
 
 bool isFiniteVec3(const glm::vec3& value) {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
@@ -66,7 +83,19 @@ bool isSafePlayerState(const PacketPlayerState& state) {
 
     return std::abs(state.position.x) <= MAX_PLAYER_COORDINATE &&
            std::abs(state.position.y) <= MAX_PLAYER_COORDINATE &&
-           std::abs(state.position.z) <= MAX_PLAYER_COORDINATE;
+           std::abs(state.position.z) <= MAX_PLAYER_COORDINATE &&
+           std::abs(state.rotationY) <= MAX_PLAYER_ROTATION_DEGREES;
+}
+
+float normalizeRotationDegrees(float value) {
+    if (!std::isfinite(value)) {
+        return 0.0f;
+    }
+
+    value = std::fmod(value, 360.0f);
+    if (value > 180.0f) value -= 360.0f;
+    if (value < -180.0f) value += 360.0f;
+    return value;
 }
 
 float clamp01(float value) {
@@ -150,7 +179,7 @@ void reportPlayerPlaytime(ConnectedPlayer& player, std::chrono::steady_clock::ti
         return;
     }
 
-    if (!ServerAuth::recordPlaytime(player.authToken, playtimeSeconds, WEB_SERVER_URL)) {
+    if (!ServerAuth::recordPlaytime(player.authToken, playtimeSeconds, webServerUrl)) {
         std::cerr << "Could not record playtime for player " << playerId << std::endl;
     }
     player.lastPlaytimeReportedAt = now;
@@ -322,7 +351,11 @@ void broadcastWorldUpdate() {
     broadcastPacket(PacketProtocol::buildPacket(PacketType::WORLD_UPDATE, updates.data(), payloadSize));
 }
 
-int main() {
+int main(int argc, char** argv) {
+    int serverPort = 7777;
+    std::string worldPath = "ServerWorld.world";
+    parseServerArguments(argc, argv, serverPort, worldPath);
+
     // Initialize random seed for guest usernames
     srand((unsigned int)time(NULL));
 
@@ -343,7 +376,7 @@ int main() {
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(7777);
+    serverAddr.sin_port = htons(static_cast<u_short>(serverPort));
 
     if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         std::cerr << "Bind failed" << std::endl;
@@ -357,10 +390,12 @@ int main() {
 
     Network::setNonBlocking(serverSocket);
 
-    std::cout << "RBLX Clone Server started on port 7777" << std::endl;
+    std::cout << "RBLX Clone Server started on port " << serverPort
+              << " using " << worldPath
+              << " with web auth " << webServerUrl << std::endl;
 
     // Load Server World
-    WorldLoader::loadWorld("ServerWorld.world", serverParts, serverPhysicsWorld);
+    WorldLoader::loadWorld(worldPath, serverParts, serverPhysicsWorld);
     std::cout << "Loaded ServerWorld with " << serverParts.size() << " parts." << std::endl;
 
     auto lastTime = std::chrono::high_resolution_clock::now();
@@ -455,7 +490,7 @@ int main() {
                         player.faceId = DEFAULT_FACE_ID;
 
                         if (!isGuest) {
-                            VerifiedUser verified = ServerAuth::verifyToken(token, WEB_SERVER_URL);
+                            VerifiedUser verified = ServerAuth::verifyToken(token, webServerUrl);
                             if (!verified.success) {
                                 std::cout << "Player " << id << " failed authentication" << std::endl;
                                 shouldDisconnect = true;
@@ -467,7 +502,7 @@ int main() {
                             player.lastPlaytimeReportedAt = std::chrono::steady_clock::now();
                             copyFixedString(player.username, sizeof(player.username), verified.username);
 
-                            std::string avatarJson = ServerAuth::getAvatar(token, WEB_SERVER_URL);
+                            std::string avatarJson = ServerAuth::getAvatar(token, webServerUrl);
                             if (!avatarJson.empty() && avatarJson.find("\"success\":true") != std::string::npos) {
                                 parseAvatarColor(avatarJson, "headColor", player.headColor);
                                 parseAvatarColor(avatarJson, "torsoColor", player.torsoColor);
@@ -588,6 +623,7 @@ int main() {
                             continue;
                         }
 
+                        pkt.rotationY = normalizeRotationDegrees(pkt.rotationY);
                         player.state = pkt;
                         player.state.playerId = id;
                         player.state.health = std::max(0.0f, std::min(100.0f, player.state.health));

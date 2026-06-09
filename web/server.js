@@ -7,6 +7,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
+const { spawn } = require('child_process');
+const crypto = require('crypto');
 
 const DEFAULT_AVATAR = Object.freeze({
     headColor: [0.8, 0.6, 0.4],
@@ -21,6 +24,9 @@ const DEFAULT_FACE_ID = 'classic';
 const FACE_IDS = new Set(['classic', 'happy', 'surprised', 'smirk', 'wink']);
 const AVATAR_FIELDS = Object.keys(DEFAULT_AVATAR);
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+const DEFAULT_GAME_ICON = '/assets/games/default-game-icon.png';
+const DEFAULT_GAME_BANNER = '/assets/games/default-game-banner.png';
+const MAX_WORLD_BYTES = 2 * 1024 * 1024;
 const UNSAFE_DEV_SECRETS = new Set([
     '',
     'your-secret-key-change-this-in-production',
@@ -41,6 +47,15 @@ function splitCsv(value) {
     return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+function resolveConfiguredPath(value, fallback) {
+    if (!value) return fallback;
+    return path.isAbsolute(value) ? value : path.resolve(__dirname, value);
+}
+
+function firstExistingPath(candidates) {
+    return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || '';
+}
+
 function loadConfig(env = process.env) {
     const nodeEnv = env.NODE_ENV || 'development';
     const isProduction = nodeEnv === 'production';
@@ -53,11 +68,25 @@ function loadConfig(env = process.env) {
     const defaultCorsOrigins = isProduction
         ? []
         : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+    const repoRoot = path.resolve(__dirname, '..');
+    const port = parseInteger(env.PORT, 3000);
+    const serverExecutablePath = resolveConfiguredPath(env.SERVER_EXECUTABLE_PATH, firstExistingPath([
+        path.join(repoRoot, 'build-portable4', 'Server.exe'),
+        path.join(repoRoot, 'build-portable3', 'Server.exe'),
+        path.join(repoRoot, 'build', 'windows-debug', 'Debug', 'Server.exe'),
+        path.join(repoRoot, 'GameRelease', 'Server', 'Server.exe')
+    ]));
+    const clientExecutablePath = resolveConfiguredPath(env.CLIENT_EXECUTABLE_PATH, firstExistingPath([
+        path.join(repoRoot, 'build-portable4', 'Client.exe'),
+        path.join(repoRoot, 'build-portable3', 'Client.exe'),
+        path.join(repoRoot, 'build', 'windows-debug', 'Debug', 'Client.exe'),
+        path.join(repoRoot, 'GameRelease', 'Client', 'Client.exe')
+    ]));
 
     return {
         nodeEnv,
         isProduction,
-        port: parseInteger(env.PORT, 3000),
+        port,
         jwtSecret,
         jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
         databasePath: env.DATABASE_PATH || path.join(__dirname, 'users.db'),
@@ -65,7 +94,14 @@ function loadConfig(env = process.env) {
         bcryptRounds: parseInteger(env.BCRYPT_ROUNDS, nodeEnv === 'test' ? 4 : 10),
         authRateLimitWindowMs: parseInteger(env.AUTH_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
         authRateLimitMax: parseInteger(env.AUTH_RATE_LIMIT_MAX, nodeEnv === 'test' ? 1000 : 20),
-        jsonBodyLimit: env.JSON_BODY_LIMIT || '16kb'
+        jsonBodyLimit: env.JSON_BODY_LIMIT || '2mb',
+        repoRoot,
+        gameWorldsDir: resolveConfiguredPath(env.GAME_WORLDS_DIR, path.join(__dirname, 'game-worlds')),
+        gameServerHost: env.GAME_SERVER_HOST || '127.0.0.1',
+        gameServerBasePort: parseInteger(env.GAME_SERVER_BASE_PORT, 7777),
+        publicBaseUrl: env.PUBLIC_BASE_URL || `http://localhost:${port}`,
+        serverExecutablePath,
+        clientExecutablePath
     };
 }
 
@@ -169,6 +205,26 @@ async function initializeDatabase(db) {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
     )`);
+
+    await dbRun(db, `CREATE TABLE IF NOT EXISTS games (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        is_public INTEGER NOT NULL DEFAULT 1,
+        world_path TEXT NOT NULL,
+        icon_path TEXT NOT NULL DEFAULT '${DEFAULT_GAME_ICON}',
+        banner_path TEXT NOT NULL DEFAULT '${DEFAULT_GAME_BANNER}',
+        parts_count INTEGER NOT NULL DEFAULT 0,
+        dynamic_parts_count INTEGER NOT NULL DEFAULT 0,
+        spawn_count INTEGER NOT NULL DEFAULT 0,
+        launch_count INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        published_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (owner_id) REFERENCES users(id)
+    )`);
 }
 
 function validateCredentials(username, password) {
@@ -265,6 +321,406 @@ function clampPlaytimeSeconds(value) {
 
 function escapeLike(value) {
     return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+function toBoolean(value, fallback = true) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'public'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'private'].includes(normalized)) return false;
+    }
+    return fallback;
+}
+
+function normalizeGameTitle(value) {
+    const title = String(value || '').trim().replace(/\s+/g, ' ');
+    if (title.length < 3 || title.length > 60) {
+        return null;
+    }
+    return title;
+}
+
+function normalizeGameDescription(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 240);
+}
+
+function slugify(value) {
+    const slug = String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48);
+    return slug || 'game';
+}
+
+function tokenizeWorldLine(line) {
+    const tokens = [];
+    const pattern = /"((?:\\"|[^"])*)"|(\S+)/g;
+    let match;
+    while ((match = pattern.exec(line)) !== null) {
+        tokens.push(match[1] !== undefined ? match[1].replace(/\\"/g, '"') : match[2]);
+    }
+    return tokens;
+}
+
+function worldBool(value) {
+    return value === '1' || value === 'true';
+}
+
+function analyzeWorldSource(worldText) {
+    if (typeof worldText !== 'string' || worldText.trim().length === 0) {
+        throw new Error('World data is required.');
+    }
+
+    const byteLength = Buffer.byteLength(worldText, 'utf8');
+    if (byteLength > MAX_WORLD_BYTES) {
+        throw new Error('World data is too large for this local server.');
+    }
+
+    const normalized = worldText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n').filter((line) => line.trim().length > 0);
+    const partsCount = Number.parseInt(lines[0], 10);
+    if (!Number.isInteger(partsCount) || partsCount < 0 || partsCount > 4096) {
+        throw new Error('World file header must contain a valid part count.');
+    }
+
+    if (lines.length - 1 < partsCount) {
+        throw new Error('World file ended before all parts were present.');
+    }
+
+    let dynamicPartsCount = 0;
+    let spawnCount = 0;
+    const shapeCounts = { cube: 0, sphere: 0, wedge: 0, cylinder: 0 };
+
+    for (let index = 0; index < partsCount; index += 1) {
+        const tokens = tokenizeWorldLine(lines[index + 1]);
+        if (tokens.length < 23) {
+            throw new Error(`World part ${index + 1} is missing fields.`);
+        }
+
+        const shape = Number.parseInt(tokens[0], 10);
+        if (!Number.isInteger(shape) || shape < 0 || shape > 3) {
+            throw new Error(`World part ${index + 1} has an unsupported shape.`);
+        }
+
+        const numberFields = [2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22];
+        for (const fieldIndex of numberFields) {
+            const value = Number(tokens[fieldIndex]);
+            if (!Number.isFinite(value)) {
+                throw new Error(`World part ${index + 1} contains invalid numeric data.`);
+            }
+        }
+
+        if (worldBool(tokens[5])) spawnCount += 1;
+        if (!worldBool(tokens[20]) && !worldBool(tokens[3])) dynamicPartsCount += 1;
+
+        const shapeName = ['cube', 'sphere', 'wedge', 'cylinder'][shape];
+        shapeCounts[shapeName] += 1;
+    }
+
+    return {
+        source: normalized.endsWith('\n') ? normalized : `${normalized}\n`,
+        partsCount,
+        dynamicPartsCount,
+        spawnCount,
+        shapeCounts
+    };
+}
+
+function saveWorldFile(config, gameId, worldSource) {
+    fs.mkdirSync(config.gameWorldsDir, { recursive: true });
+    const filename = `game-${gameId}-${Date.now()}.world`;
+    const worldPath = path.join(config.gameWorldsDir, filename);
+    fs.writeFileSync(worldPath, worldSource, 'utf8');
+    return worldPath;
+}
+
+function gameQueryBase() {
+    return `SELECT g.id, g.owner_id, g.title, g.slug, g.description, g.is_public,
+            g.world_path, g.icon_path, g.banner_path, g.parts_count, g.dynamic_parts_count,
+            g.spawn_count, g.launch_count, g.created_at, g.updated_at, g.published_at,
+            u.username AS owner_username
+        FROM games g
+        JOIN users u ON u.id = g.owner_id`;
+}
+
+function serializeGame(row, includeOwnerControls = false) {
+    return {
+        id: row.id,
+        ownerId: row.owner_id,
+        ownerUsername: row.owner_username,
+        title: row.title,
+        slug: row.slug,
+        description: row.description || '',
+        isPublic: Boolean(row.is_public),
+        iconUrl: row.icon_path || DEFAULT_GAME_ICON,
+        bannerUrl: row.banner_path || DEFAULT_GAME_BANNER,
+        stats: {
+            partsCount: Number(row.parts_count || 0),
+            dynamicPartsCount: Number(row.dynamic_parts_count || 0),
+            spawnCount: Number(row.spawn_count || 0),
+            launchCount: Number(row.launch_count || 0)
+        },
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        publishedAt: row.published_at,
+        canEdit: includeOwnerControls
+    };
+}
+
+async function getGameRow(db, gameId) {
+    return dbGet(db, `${gameQueryBase()} WHERE g.id = ?`, [gameId]);
+}
+
+async function createGameRecord(db, config, user, input) {
+    const title = normalizeGameTitle(input && input.title);
+    if (!title) {
+        const error = new Error('Game title must be 3-60 characters.');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    let analysis;
+    try {
+        analysis = analyzeWorldSource(String(input.worldText || input.world || ''));
+    } catch (error) {
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const result = await dbRun(db, `INSERT INTO games (
+            owner_id, title, slug, description, is_public, world_path,
+            icon_path, banner_path, parts_count, dynamic_parts_count, spawn_count
+        ) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`, [
+        user.id,
+        title,
+        slugify(title),
+        normalizeGameDescription(input.description),
+        toBoolean(input.isPublic, true) ? 1 : 0,
+        input.iconUrl || DEFAULT_GAME_ICON,
+        input.bannerUrl || DEFAULT_GAME_BANNER,
+        analysis.partsCount,
+        analysis.dynamicPartsCount,
+        analysis.spawnCount
+    ]);
+
+    const worldPath = saveWorldFile(config, result.lastID, analysis.source);
+    await dbRun(db, `UPDATE games
+        SET world_path = ?, updated_at = CURRENT_TIMESTAMP, published_at = CURRENT_TIMESTAMP
+        WHERE id = ?`, [worldPath, result.lastID]);
+
+    return getGameRow(db, result.lastID);
+}
+
+async function updateGameRecord(db, config, gameId, user, input) {
+    const existing = await getGameRow(db, gameId);
+    if (!existing || existing.owner_id !== user.id) {
+        const error = new Error('Game not found.');
+        error.statusCode = 404;
+        throw error;
+    }
+
+    const title = input.title === undefined ? existing.title : normalizeGameTitle(input.title);
+    if (!title) {
+        const error = new Error('Game title must be 3-60 characters.');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    let worldPath = existing.world_path;
+    let partsCount = existing.parts_count;
+    let dynamicPartsCount = existing.dynamic_parts_count;
+    let spawnCount = existing.spawn_count;
+
+    if (input.worldText !== undefined || input.world !== undefined) {
+        let analysis;
+        try {
+            analysis = analyzeWorldSource(String(input.worldText || input.world || ''));
+        } catch (error) {
+            error.statusCode = 400;
+            throw error;
+        }
+        worldPath = saveWorldFile(config, gameId, analysis.source);
+        partsCount = analysis.partsCount;
+        dynamicPartsCount = analysis.dynamicPartsCount;
+        spawnCount = analysis.spawnCount;
+    }
+
+    await dbRun(db, `UPDATE games
+        SET title = ?, slug = ?, description = ?, is_public = ?, world_path = ?,
+            icon_path = ?, banner_path = ?, parts_count = ?, dynamic_parts_count = ?,
+            spawn_count = ?, updated_at = CURRENT_TIMESTAMP, published_at = CURRENT_TIMESTAMP
+        WHERE id = ?`, [
+        title,
+        slugify(title),
+        input.description === undefined ? existing.description : normalizeGameDescription(input.description),
+        toBoolean(input.isPublic, Boolean(existing.is_public)) ? 1 : 0,
+        worldPath,
+        input.iconUrl || existing.icon_path || DEFAULT_GAME_ICON,
+        input.bannerUrl || existing.banner_path || DEFAULT_GAME_BANNER,
+        partsCount,
+        dynamicPartsCount,
+        spawnCount,
+        gameId
+    ]);
+
+    return getGameRow(db, gameId);
+}
+
+async function seedStarterGame(db, config) {
+    const row = await dbGet(db, 'SELECT COUNT(*) AS count FROM games');
+    if (Number(row && row.count) > 0) return;
+
+    const owner = await dbGet(db, 'SELECT id, username FROM users ORDER BY id LIMIT 1');
+    let ownerId = owner && owner.id;
+    if (!ownerId) {
+        const passwordHash = await bcrypt.hash('local-starter-account', config.bcryptRounds);
+        const result = await dbRun(db, 'INSERT INTO users (username, password_hash) VALUES (?, ?)', [
+            'RBLXCreator',
+            passwordHash
+        ]);
+        ownerId = result.lastID;
+    }
+
+    const rootWorldPath = path.join(config.repoRoot || path.resolve(__dirname, '..'), 'ServerWorld.world');
+    if (!fs.existsSync(rootWorldPath)) return;
+
+    const worldText = fs.readFileSync(rootWorldPath, 'utf8');
+    await createGameRecord(db, config, { id: ownerId }, {
+        title: 'Starter Baseplate',
+        description: 'The default shared world, now published as the first public game.',
+        isPublic: true,
+        worldText
+    });
+}
+
+function isChildRunning(child) {
+    return child && child.exitCode === null && !child.killed;
+}
+
+async function isPortAvailable(host, port) {
+    return new Promise((resolve) => {
+        const tester = net.createServer()
+            .once('error', () => resolve(false))
+            .once('listening', () => {
+                tester.close(() => resolve(true));
+            })
+            .listen(port, host);
+    });
+}
+
+async function findAvailablePort(host, startPort, usedPorts) {
+    for (let offset = 0; offset < 200; offset += 1) {
+        const port = startPort + offset;
+        if (usedPorts.has(port)) continue;
+        if (await isPortAvailable(host, port)) return port;
+    }
+    throw new Error('No local game server ports are available.');
+}
+
+function activeGameInstances(app, gameId) {
+    const active = [];
+    for (const [instanceId, instance] of app.locals.gameInstances.entries()) {
+        const running = instance.status === 'manual' || isChildRunning(instance.child);
+        if (!running) {
+            app.locals.gameInstances.delete(instanceId);
+            continue;
+        }
+        if (instance.status === 'starting' && isChildRunning(instance.child)) {
+            instance.status = 'running';
+        }
+        if (instance.gameId === gameId) active.push(instance);
+    }
+    return active;
+}
+
+async function ensureGameInstance(app, game, options = {}) {
+    const config = app.locals.config;
+    const existing = activeGameInstances(app, game.id);
+    if (!options.forceNew && existing.length > 0) {
+        return existing[0];
+    }
+
+    const usedPorts = new Set([...app.locals.gameInstances.values()].map((instance) => instance.port));
+    const port = await findAvailablePort(config.gameServerHost || '127.0.0.1', config.gameServerBasePort || 7777, usedPorts);
+    const instance = {
+        id: crypto.randomUUID(),
+        gameId: game.id,
+        host: config.gameServerHost || '127.0.0.1',
+        port,
+        status: 'manual',
+        startedAt: new Date().toISOString(),
+        processId: null,
+        command: ''
+    };
+
+    if (config.serverExecutablePath && fs.existsSync(config.serverExecutablePath) && game.world_path) {
+        const args = [
+            '--port', String(port),
+            '--world', game.world_path,
+            '--web', config.publicBaseUrl || `http://localhost:${config.port || 3000}`
+        ];
+        const child = spawn(config.serverExecutablePath, args, {
+            cwd: config.repoRoot || path.resolve(__dirname, '..'),
+            detached: true,
+            stdio: 'ignore'
+        });
+        child.unref();
+        instance.child = child;
+        instance.processId = child.pid || null;
+        instance.status = 'starting';
+        instance.command = `"${config.serverExecutablePath}" ${args.map((arg) => `"${arg}"`).join(' ')}`;
+    } else {
+        instance.command = `Server.exe --port ${port} --world "${game.world_path}" --web "${config.publicBaseUrl || 'http://localhost:3000'}"`;
+    }
+
+    app.locals.gameInstances.set(instance.id, instance);
+    return instance;
+}
+
+function buildClientLaunch(config, req, game, instance, token) {
+    const webServerUrl = `${req.protocol}://${req.get('host')}`;
+    const clientPath = config.clientExecutablePath || 'Client.exe';
+    const args = [
+        '--server', instance.host,
+        '--port', String(instance.port),
+        '--web', webServerUrl,
+        '--token', token,
+        '--game', String(game.id),
+        '--connect'
+    ];
+    const params = new URLSearchParams({
+        gameId: String(game.id),
+        host: instance.host,
+        port: String(instance.port),
+        web: webServerUrl,
+        token
+    });
+
+    return {
+        host: instance.host,
+        port: instance.port,
+        webServerUrl,
+        protocolUrl: `rblxclone://play?${params.toString()}`,
+        command: `"${clientPath}" ${args.map((arg) => `"${arg}"`).join(' ')}`,
+        args
+    };
+}
+
+function launchClientIfAvailable(config, launch) {
+    if (!config.clientExecutablePath || !fs.existsSync(config.clientExecutablePath)) {
+        return { launched: false, reason: 'Client executable was not found.' };
+    }
+
+    const child = spawn(config.clientExecutablePath, launch.args, {
+        cwd: config.repoRoot || path.resolve(__dirname, '..'),
+        detached: true,
+        stdio: 'ignore'
+    });
+    child.unref();
+    return { launched: true, processId: child.pid || null };
 }
 
 function serializePublicUser(row, relationship = 'none', friendCount = 0) {
@@ -435,14 +891,17 @@ function requireJsonBody(req, res, next) {
 }
 
 function createApp(options = {}) {
-    const config = options.config || loadConfig(options.env || process.env);
+    const config = options.config
+        ? { ...loadConfig(options.env || process.env), ...options.config }
+        : loadConfig(options.env || process.env);
     const db = options.db || openDatabase(config.databasePath);
     const app = express();
-    const ready = initializeDatabase(db);
+    const ready = initializeDatabase(db).then(() => seedStarterGame(db, config));
 
     app.locals.config = config;
     app.locals.db = db;
     app.locals.ready = ready;
+    app.locals.gameInstances = new Map();
 
     app.use(helmet({
         contentSecurityPolicy: false
@@ -488,6 +947,29 @@ function createApp(options = {}) {
         } catch (error) {
             res.status(401).json({ error: 'Invalid or expired token.' });
         }
+    }
+
+    async function optionalAuthenticate(req, res, next) {
+        const token = extractBearerToken(req);
+        if (!token) {
+            next();
+            return;
+        }
+
+        try {
+            await ready;
+            const decoded = jwt.verify(token, config.jwtSecret);
+            const userId = Number(decoded.userId || decoded.sub);
+            const user = Number.isInteger(userId)
+                ? await dbGet(db, 'SELECT id, username FROM users WHERE id = ?', [userId])
+                : null;
+            if (user) {
+                req.user = { id: user.id, username: user.username };
+            }
+        } catch (error) {
+            // Public game pages should still load if a stale browser token exists.
+        }
+        next();
     }
 
     app.post('/api/signup', authLimiter, async (req, res, next) => {
@@ -828,6 +1310,176 @@ function createApp(options = {}) {
         }
     });
 
+    app.get('/api/games', async (req, res, next) => {
+        try {
+            await ready;
+            const rows = await dbAll(db, `${gameQueryBase()}
+                WHERE g.is_public = 1
+                ORDER BY g.published_at DESC, g.id DESC
+                LIMIT 60`);
+            res.json({ success: true, games: rows.map((row) => serializeGame(row)) });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.get('/api/games/mine', authenticate, async (req, res, next) => {
+        try {
+            const rows = await dbAll(db, `${gameQueryBase()}
+                WHERE g.owner_id = ?
+                ORDER BY g.updated_at DESC, g.id DESC`, [req.user.id]);
+            res.json({ success: true, games: rows.map((row) => serializeGame(row, true)) });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.post('/api/games', authenticate, async (req, res, next) => {
+        try {
+            const game = await createGameRecord(db, config, req.user, req.body || {});
+            res.status(201).json({ success: true, game: serializeGame(game, true) });
+        } catch (error) {
+            if (error.statusCode) {
+                res.status(error.statusCode).json({ error: error.message });
+                return;
+            }
+            next(error);
+        }
+    });
+
+    app.post('/api/games/publish', authenticate, async (req, res, next) => {
+        try {
+            const gameId = parseUserId(req.body && req.body.gameId);
+            const game = gameId
+                ? await updateGameRecord(db, config, gameId, req.user, req.body || {})
+                : await createGameRecord(db, config, req.user, req.body || {});
+            res.status(gameId ? 200 : 201).json({ success: true, game: serializeGame(game, true) });
+        } catch (error) {
+            if (error.statusCode) {
+                res.status(error.statusCode).json({ error: error.message });
+                return;
+            }
+            next(error);
+        }
+    });
+
+    app.get('/api/games/:id', optionalAuthenticate, async (req, res, next) => {
+        try {
+            await ready;
+            const gameId = parseUserId(req.params.id);
+            if (!gameId) {
+                res.status(400).json({ error: 'Game ID must be a positive number.' });
+                return;
+            }
+
+            const row = await getGameRow(db, gameId);
+            if (!row || (!row.is_public && (!req.user || req.user.id !== row.owner_id))) {
+                res.status(404).json({ error: 'Game not found.' });
+                return;
+            }
+
+            res.json({
+                success: true,
+                game: serializeGame(row, req.user && req.user.id === row.owner_id),
+                servers: activeGameInstances(app, row.id).map((instance) => ({
+                    id: instance.id,
+                    host: instance.host,
+                    port: instance.port,
+                    status: instance.status,
+                    processId: instance.processId,
+                    startedAt: instance.startedAt
+                }))
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.put('/api/games/:id', authenticate, async (req, res, next) => {
+        try {
+            const gameId = parseUserId(req.params.id);
+            if (!gameId) {
+                res.status(400).json({ error: 'Game ID must be a positive number.' });
+                return;
+            }
+
+            const game = await updateGameRecord(db, config, gameId, req.user, req.body || {});
+            res.json({ success: true, game: serializeGame(game, true) });
+        } catch (error) {
+            if (error.statusCode) {
+                res.status(error.statusCode).json({ error: error.message });
+                return;
+            }
+            next(error);
+        }
+    });
+
+    app.get('/api/games/:id/servers', optionalAuthenticate, async (req, res, next) => {
+        try {
+            const gameId = parseUserId(req.params.id);
+            const row = gameId ? await getGameRow(db, gameId) : null;
+            if (!row || (!row.is_public && (!req.user || req.user.id !== row.owner_id))) {
+                res.status(404).json({ error: 'Game not found.' });
+                return;
+            }
+
+            res.json({
+                success: true,
+                servers: activeGameInstances(app, row.id).map((instance) => ({
+                    id: instance.id,
+                    host: instance.host,
+                    port: instance.port,
+                    status: instance.status,
+                    processId: instance.processId,
+                    startedAt: instance.startedAt
+                }))
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.post('/api/games/:id/play', authenticate, async (req, res, next) => {
+        try {
+            const gameId = parseUserId(req.params.id);
+            const row = gameId ? await getGameRow(db, gameId) : null;
+            if (!row || (!row.is_public && row.owner_id !== req.user.id)) {
+                res.status(404).json({ error: 'Game not found.' });
+                return;
+            }
+
+            const instance = await ensureGameInstance(app, row, {
+                forceNew: Boolean(req.body && req.body.newServer)
+            });
+            await dbRun(db, `UPDATE games
+                SET launch_count = launch_count + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?`, [row.id]);
+
+            const token = extractBearerToken(req);
+            const launch = buildClientLaunch(config, req, row, instance, token);
+            const player = req.body && req.body.launchClient === false
+                ? { launched: false, reason: 'Client launch was skipped.' }
+                : launchClientIfAvailable(config, launch);
+
+            res.json({
+                success: true,
+                game: serializeGame({ ...row, launch_count: Number(row.launch_count || 0) + 1 }),
+                server: {
+                    id: instance.id,
+                    host: instance.host,
+                    port: instance.port,
+                    status: instance.status,
+                    processId: instance.processId,
+                    startedAt: instance.startedAt
+                },
+                launch,
+                player
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+
     app.get('/api/avatar', authenticate, async (req, res, next) => {
         try {
             const row = await dbGet(db, 'SELECT * FROM avatars WHERE user_id = ?', [req.user.id]);
@@ -918,6 +1570,18 @@ function createApp(options = {}) {
 
     app.get('/search', (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'search.html'));
+    });
+
+    app.get('/games', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'games.html'));
+    });
+
+    app.get('/create', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'create.html'));
+    });
+
+    app.get('/games/:id', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'game.html'));
     });
 
     app.get(['/profile', '/profile/:id'], (req, res) => {

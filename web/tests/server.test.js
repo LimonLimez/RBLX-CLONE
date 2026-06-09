@@ -20,12 +20,22 @@ function createTestContext() {
             bcryptRounds: 4,
             authRateLimitWindowMs: 60 * 1000,
             authRateLimitMax: 1000,
-            jsonBodyLimit: '16kb'
+            jsonBodyLimit: '2mb',
+            gameWorldsDir: path.join(directory, 'worlds'),
+            serverExecutablePath: '',
+            clientExecutablePath: '',
+            gameServerBasePort: 19000
         }
     });
 
     return { app, directory };
 }
+
+const SIMPLE_WORLD = `3
+0 "Baseplate" -1 0 0 0 0 -1 0 40 1 40 0.2 0.8 0.2 0 0 0 0 0 1 1 0
+0 "Spawn" -1 0 0 1 0 1 0 4 1 4 0.1 0.5 1 0 0 0 0 0 1 1 0
+0 "Loose Block" -1 0 0 0 0 5 0 2 2 2 0.9 0.2 0.2 0 0 0 0 0 0 1 0
+`;
 
 async function withServer(callback) {
     const { app, directory } = createTestContext();
@@ -248,5 +258,57 @@ test('social profiles support search, friend requests, friends, and playtime', a
         assert.equal(bobProfileAfter.response.status, 200);
         assert.equal(bobProfileAfter.json.profile.relationship, 'none');
         assert.equal(bobProfileAfter.json.profile.friendCount, 0);
+    });
+});
+
+test('games can be published, listed, inspected, and allocated for play', async () => {
+    await withServer(async ({ baseUrl }) => {
+        const creator = await signup(baseUrl, 'CreatorOne');
+
+        const publish = await request(baseUrl, 'POST', '/api/games', {
+            title: 'Sky Tower',
+            description: 'Climb the bright test tower.',
+            isPublic: true,
+            worldText: SIMPLE_WORLD
+        }, creator.token);
+        assert.equal(publish.response.status, 201);
+        assert.equal(publish.json.success, true);
+        assert.equal(publish.json.game.title, 'Sky Tower');
+        assert.equal(publish.json.game.ownerUsername, 'CreatorOne');
+        assert.equal(publish.json.game.stats.partsCount, 3);
+        assert.equal(publish.json.game.stats.dynamicPartsCount, 1);
+        assert.equal(publish.json.game.stats.spawnCount, 1);
+        assert.equal(publish.json.game.iconUrl, '/assets/games/default-game-icon.png');
+        assert.equal(publish.json.game.bannerUrl, '/assets/games/default-game-banner.png');
+
+        const list = await request(baseUrl, 'GET', '/api/games');
+        assert.equal(list.response.status, 200);
+        assert.equal(list.json.success, true);
+        assert.ok(list.json.games.some((game) => game.id === publish.json.game.id));
+
+        const detail = await request(baseUrl, 'GET', `/api/games/${publish.json.game.id}`);
+        assert.equal(detail.response.status, 200);
+        assert.equal(detail.json.game.title, 'Sky Tower');
+        assert.deepEqual(detail.json.servers, []);
+
+        const mine = await request(baseUrl, 'GET', '/api/games/mine', undefined, creator.token);
+        assert.equal(mine.response.status, 200);
+        assert.equal(mine.json.games.length, 1);
+        assert.equal(mine.json.games[0].canEdit, true);
+
+        const play = await request(baseUrl, 'POST', `/api/games/${publish.json.game.id}/play`, {
+            launchClient: false
+        }, creator.token);
+        assert.equal(play.response.status, 200);
+        assert.equal(play.json.success, true);
+        assert.equal(play.json.server.host, '127.0.0.1');
+        assert.equal(play.json.server.status, 'manual');
+        assert.equal(play.json.launch.args.includes('--connect'), true);
+        assert.equal(play.json.player.launched, false);
+
+        const detailAfterPlay = await request(baseUrl, 'GET', `/api/games/${publish.json.game.id}`);
+        assert.equal(detailAfterPlay.response.status, 200);
+        assert.equal(detailAfterPlay.json.servers.length, 1);
+        assert.equal(detailAfterPlay.json.game.stats.launchCount, 1);
     });
 });

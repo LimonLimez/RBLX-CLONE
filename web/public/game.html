@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game - RBLX Clone</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page" data-game-page>
+        <header class="topbar">
+            <a class="brand" href="/games">
+                <span>RBLX Clone</span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <a href="/games">Games</a>
+                <a href="/create">Create</a>
+                <a href="/dashboard">Dashboard</a>
+                <button class="button danger" type="button" data-logout>Logout</button>
+            </nav>
+        </header>
+
+        <main id="main">
+            <section class="game-hero-detail" data-game-hero>
+                <img src="/assets/games/default-game-banner.png" alt="" data-game-banner>
+                <div class="game-hero-copy">
+                    <p class="label" data-game-owner>Game</p>
+                    <h1 class="page-title" data-game-title>Loading</h1>
+                    <p class="lede" data-game-description></p>
+                    <div class="hero-actions">
+                        <button class="button" type="button" data-play-game>Play</button>
+                        <a class="button secondary" href="/games">Browse games</a>
+                    </div>
+                </div>
+            </section>
+
+            <div class="status" data-game-status aria-live="polite"></div>
+
+            <section class="game-detail-grid">
+                <article class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Stats</p>
+                            <h2>Game info</h2>
+                        </div>
+                    </div>
+                    <div class="stats-grid" data-game-stats></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Servers</p>
+                            <h2>Live instances</h2>
+                        </div>
+                    </div>
+                    <div class="stack-list" data-game-servers></div>
+                </article>
+
+                <article class="panel launch-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Launch</p>
+                            <h2>Player session</h2>
+                        </div>
+                    </div>
+                    <pre class="launch-command" data-launch-command hidden></pre>
+                </article>
+            </section>
+        </main>
+    </div>
+    <script src="/app.js?v=games-1" defer></script>
+</body>
+</html>

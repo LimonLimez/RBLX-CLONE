@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
@@ -184,6 +185,7 @@ int myPlayerId = -1;
 bool isConnected = false;
 char myUsername[32] = "Guest";
 char serverIP[32] = "127.0.0.1";
+int serverPort = 7777;
 char authToken[256] = "";
 char loginUsername[32] = "";
 char loginPassword[64] = "";
@@ -191,6 +193,8 @@ char webServerUrl[128] = "http://localhost:3000";
 bool showLoginError = false;
 char loginErrorMsg[256] = "";
 bool showConnectionUI = false; // Track if connection UI should be shown
+bool autoConnectOnStart = false;
+int launchGameId = 0;
 
 std::map<int, Character*> remotePlayers;
 std::map<int, std::string> playerNames;
@@ -288,6 +292,98 @@ std::string openFileDialog(GLFWwindow* window) {
     return "";
 }
 
+void copyArgument(char* destination, size_t destinationSize, const char* value) {
+    if (!destination || destinationSize == 0 || !value) return;
+    std::memset(destination, 0, destinationSize);
+    std::strncpy(destination, value, destinationSize - 1);
+}
+
+void parseClientArguments(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--server" && i + 1 < argc) {
+            copyArgument(serverIP, sizeof(serverIP), argv[++i]);
+        } else if (arg == "--port" && i + 1 < argc) {
+            int parsed = std::atoi(argv[++i]);
+            if (parsed > 0 && parsed <= 65535) {
+                serverPort = parsed;
+            }
+        } else if (arg == "--token" && i + 1 < argc) {
+            copyArgument(authToken, sizeof(authToken), argv[++i]);
+            currentState = MENU_PLAY_CHOICE;
+        } else if (arg == "--web" && i + 1 < argc) {
+            copyArgument(webServerUrl, sizeof(webServerUrl), argv[++i]);
+        } else if (arg == "--game" && i + 1 < argc) {
+            launchGameId = std::max(0, std::atoi(argv[++i]));
+        } else if (arg == "--connect") {
+            autoConnectOnStart = true;
+            currentState = MENU_PLAY_CHOICE;
+        }
+    }
+}
+
+bool connectToConfiguredServer() {
+    clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (clientSocket == INVALID_SOCKET) {
+        showLoginError = true;
+        std::strncpy(loginErrorMsg, "Could not create network socket.", sizeof(loginErrorMsg) - 1);
+        return false;
+    }
+
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    if (inet_pton(AF_INET, serverIP, &serverAddr.sin_addr) != 1) {
+        showLoginError = true;
+        std::strncpy(loginErrorMsg, "Invalid server address.", sizeof(loginErrorMsg) - 1);
+        closesocket(clientSocket);
+        clientSocket = INVALID_SOCKET;
+        return false;
+    }
+    serverAddr.sin_port = htons(static_cast<u_short>(serverPort));
+
+    if (connect(clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        showLoginError = true;
+        std::strncpy(loginErrorMsg, "Connection failed.", sizeof(loginErrorMsg) - 1);
+        closesocket(clientSocket);
+        clientSocket = INVALID_SOCKET;
+        return false;
+    }
+
+    isConnected = true;
+    currentState = ONLINE;
+    showConnectionUI = false;
+    Network::setNonBlocking(clientSocket);
+
+    PacketConnect pkt;
+    std::memset(&pkt, 0, sizeof(pkt));
+
+    if (std::strlen(authToken) > 0) {
+        std::strncpy(pkt.username, myUsername, sizeof(pkt.username) - 1);
+        std::strncpy(pkt.authToken, authToken, sizeof(pkt.authToken) - 1);
+    } else {
+        std::strncpy(pkt.username, "Guest", sizeof(pkt.username) - 1);
+    }
+
+    if (!Network::sendStructPacket(clientSocket, PacketType::CONNECT, pkt)) {
+        showLoginError = true;
+        std::strncpy(loginErrorMsg, "Failed to send connect packet.", sizeof(loginErrorMsg) - 1);
+        isConnected = false;
+        closesocket(clientSocket);
+        clientSocket = INVALID_SOCKET;
+        currentState = MENU_PLAY_CHOICE;
+        showConnectionUI = true;
+        return false;
+    }
+
+    std::cout << "Connected to " << serverIP << ":" << serverPort;
+    if (launchGameId > 0) {
+        std::cout << " for game " << launchGameId;
+    }
+    std::cout << ". Waiting for world state from server..." << std::endl;
+    return true;
+}
+
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
     if (ImGui::GetIO().WantCaptureMouse) return;
     
@@ -326,7 +422,7 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
     camera.ProcessMouseMovement(xoffset, yoffset);
 }
 
-int main() {
+int main(int argc, char** argv) {
     // Redirect stdout/stderr to files for debugging
     freopen("client_log.txt", "w", stdout);
     freopen("client_error_log.txt", "w", stderr);
@@ -395,11 +491,17 @@ int main() {
             }
             tokenFile.close();
         }
+
+        parseClientArguments(argc, argv);
         
         // Load saved avatar (will be fetched from server when logged in)
         currentAvatar.loadFromFile("avatar.txt");
         
         loadFaceTextures();
+
+        if (autoConnectOnStart) {
+            connectToConfiguredServer();
+        }
 
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
@@ -651,55 +753,19 @@ int main() {
             
             // Connection UI (shown when "Play Online" is clicked from MENU_PLAY_CHOICE)
             if (showConnectionUI) {
-                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 220.0f, uiScale), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 220.0f, uiScale), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 260.0f, uiScale), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 260.0f, uiScale), ImGuiCond_Always);
                 const char* title = (strlen(authToken) > 0) ? "Connect to Server" : "Connect to Server (Guest)";
                 if (ImGui::Begin(title, NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     ImGui::Text("Server IP:");
                     ImGui::InputText("##ip", serverIP, 32);
+                    ImGui::Text("Port:");
+                    ImGui::InputInt("##port", &serverPort);
+                    serverPort = std::max(1, std::min(65535, serverPort));
                     
                     const char* connectText = (strlen(authToken) > 0) ? "Connect" : "Connect as Guest";
                     if (ImGui::Button(connectText, UiScale::Size(180.0f, 40.0f, uiScale))) {
-                        // Connect Logic
-                        clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-                        sockaddr_in serverAddr;
-                        serverAddr.sin_family = AF_INET;
-                        inet_pton(AF_INET, serverIP, &serverAddr.sin_addr);
-                        serverAddr.sin_port = htons(7777);
-                        
-                        if (connect(clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-                            showLoginError = true;
-                            strncpy(loginErrorMsg, "Connection failed!", 255);
-                        } else {
-                            isConnected = true;
-                            currentState = ONLINE;
-                            showConnectionUI = false;
-                            Network::setNonBlocking(clientSocket);
-                            
-                            PacketConnect pkt;
-                            std::memset(&pkt, 0, sizeof(pkt));
-                            
-                            if (strlen(authToken) > 0) {
-                                // Authenticated user
-                                strncpy(pkt.username, myUsername, sizeof(pkt.username) - 1);
-                                strncpy(pkt.authToken, authToken, sizeof(pkt.authToken) - 1);
-                            } else {
-                                // Guest
-                                strncpy(pkt.username, "Guest", sizeof(pkt.username) - 1);
-                            }
-                            
-                            if (!Network::sendStructPacket(clientSocket, PacketType::CONNECT, pkt)) {
-                                showLoginError = true;
-                                strncpy(loginErrorMsg, "Failed to send connect packet!", 255);
-                                isConnected = false;
-                                closesocket(clientSocket);
-                                clientSocket = INVALID_SOCKET;
-                                currentState = MENU_PLAY_CHOICE;
-                                showConnectionUI = true;
-                            } else {
-                                std::cout << "Connected! Waiting for world state from server..." << std::endl;
-                            }
-                        }
+                        connectToConfiguredServer();
                     }
                     
                     ImGui::SameLine();
@@ -907,7 +973,7 @@ int main() {
                                         
                                         if (remoteChar) {
                                             remoteChar->setFaceTexture(textureForFace(faceId));
-                                            remoteChar->isRemote = true;
+                                            remoteChar->setRemoteControlled(true);
                                             remotePlayers[pkt->playerId] = remoteChar;
                                             std::cout << "Successfully created remote character for player " << pkt->playerId << " with avatar colors" << std::endl;
                                         } else {

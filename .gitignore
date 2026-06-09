@@ -46,6 +46,7 @@ coverage/
 *.db
 *.sqlite
 *.sqlite3
+web/game-worlds/
 
 # Environment/local config
 .env

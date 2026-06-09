@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create - RBLX Clone</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page" data-create-game-page>
+        <header class="topbar">
+            <a class="brand" href="/games">
+                <span>RBLX Clone</span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <a href="/games">Games</a>
+                <a href="/dashboard">Dashboard</a>
+                <a href="/profile">Profile</a>
+                <button class="button danger" type="button" data-logout>Logout</button>
+            </nav>
+        </header>
+
+        <main id="main">
+            <div class="dashboard-head">
+                <div>
+                    <p class="label">Creator</p>
+                    <h1 class="page-title">Create</h1>
+                </div>
+            </div>
+
+            <section class="create-layout">
+                <form class="panel form" data-create-game-form>
+                    <div class="field">
+                        <label for="game-title">Game title</label>
+                        <input class="input" id="game-title" name="title" type="text" minlength="3" maxlength="60" required>
+                    </div>
+                    <div class="field">
+                        <label for="game-description">Description</label>
+                        <textarea class="input textarea" id="game-description" name="description" maxlength="240"></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="world-file">World file</label>
+                        <input class="input file-input" id="world-file" name="world" type="file" accept=".world,text/plain" required>
+                    </div>
+                    <label class="check-row">
+                        <input type="checkbox" name="isPublic" checked>
+                        <span>Public</span>
+                    </label>
+                    <div class="status" data-create-game-status aria-live="polite"></div>
+                    <button class="button full" type="submit">Publish game</button>
+                </form>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Library</p>
+                            <h2>Your games</h2>
+                        </div>
+                    </div>
+                    <div class="stack-list" data-my-games-list></div>
+                </section>
+            </section>
+        </main>
+    </div>
+    <script src="/app.js?v=games-1" defer></script>
+</body>
+</html>

@@ -7,7 +7,7 @@ RBLX Clone is an early prototype of a Roblox-style client, game server, Studio e
 - Client, Server, and Studio are C++17 targets.
 - The Client and Server currently require Windows because they use WinSock and WinHTTP.
 - Studio uses GLFW/OpenGL/ImGui/ImGuizmo and has a basic world editing path.
-- The web backend is a Node.js/Express service with SQLite, bcrypt password hashing, JWT authentication, and avatar storage.
+- The web backend is a Node.js/Express service with SQLite, bcrypt password hashing, JWT authentication, avatar storage, public game catalog pages, and local game-server launch orchestration.
 - Networking is still a compact binary protocol. It now has shared framing, payload limits, partial send handling, and receive buffering, but it is still a prototype protocol.
 
 ## Repository Layout
@@ -108,7 +108,7 @@ Environment variables:
 - `JWT_SECRET` - required and must be strong in production.
 - `JWT_EXPIRES_IN` - JWT lifetime, default `7d`.
 - `CORS_ORIGIN` - comma-separated allowed origins. Development defaults to localhost origins.
-- `JSON_BODY_LIMIT` - Express JSON body limit, default `16kb`.
+- `JSON_BODY_LIMIT` - Express JSON body limit, default `2mb`.
 - `AUTH_RATE_LIMIT_WINDOW_MS` - auth rate limit window.
 - `AUTH_RATE_LIMIT_MAX` - auth requests allowed per window.
 
@@ -139,6 +139,14 @@ Profiles and friends:
 - `POST /api/friends/respond` with `{ "userId": 2, "action": "accept" }` accepts or declines an incoming request.
 - `POST /api/friends/remove` with `{ "userId": 2 }` removes a friend or cancels a pending request.
 
+Games:
+
+- `GET /api/games` lists public games for the games page.
+- `GET /api/games/:id` returns game details, world stats, and active local instances.
+- `GET /api/games/mine` with `Authorization: Bearer <token>` lists your published games.
+- `POST /api/games` with `Authorization: Bearer <token>` and `{ "title": "...", "description": "...", "isPublic": true, "worldText": "..." }` publishes a world file.
+- `POST /api/games/:id/play` with `Authorization: Bearer <token>` starts or reuses a local game server and returns native Player launch metadata.
+
 Tokens are no longer accepted in avatar URLs. `/api/verify` still accepts a body token as a deprecated compatibility fallback, but new callers should use the Authorization header.
 
 The game server reports authenticated player sessions to `/api/me/playtime` while a player is connected and once more when the player disconnects.
@@ -152,6 +160,19 @@ The game server reports authenticated player sessions to `/api/me/playtime` whil
 - Left click: select part.
 - Toolbox: add parts, switch move/rotate/scale tools, enable snap.
 - Properties: edit selected part fields.
+- Publish: sign in against the web server, save the current world, and publish it to the site as a public or private game.
+
+## Multi-Game Local Hosting
+
+The website stores published `.world` files under `web/game-worlds` by default. When a signed-in user presses Play on a game page, the web backend finds an open local port, starts `Server.exe --port <port> --world <published-world> --web <site-url>`, and can launch `Client.exe --server <host> --port <port> --web <site-url> --token <jwt> --connect` when `CLIENT_EXECUTABLE_PATH` points to a built Player.
+
+Useful launch environment variables:
+
+- `GAME_WORLDS_DIR` - directory for published world files.
+- `GAME_SERVER_BASE_PORT` - first port to try for game instances, default `7777`.
+- `SERVER_EXECUTABLE_PATH` - local game server executable.
+- `CLIENT_EXECUTABLE_PATH` - local Player executable.
+- `PUBLIC_BASE_URL` - URL passed to native server/client for web auth, default `http://localhost:3000`.
 
 Scale operations assign the decomposed absolute scale from ImGuizmo and clamp it to a safe positive range. They do not multiply scale every frame.
 

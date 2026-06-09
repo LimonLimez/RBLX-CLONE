@@ -78,7 +78,8 @@ async function verifySession() {
 async function requireSession() {
     const session = await verifySession();
     if (!session) {
-        window.location.href = '/login';
+        const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        window.location.href = `/login?next=${encodeURIComponent(next)}`;
         return null;
     }
     return session;
@@ -104,6 +105,12 @@ function formatJoined(value) {
     const date = value ? new Date(value) : null;
     if (!date || Number.isNaN(date.getTime())) return 'Joined recently';
     return `Joined ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function formatDate(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return 'Unknown';
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function profileHref(user) {
@@ -325,7 +332,10 @@ function initLogin() {
 
             saveSession(data);
             setStatus(status, 'Signed in. Opening dashboard.', 'success');
-            window.setTimeout(() => { window.location.href = '/dashboard'; }, 350);
+            const params = new URLSearchParams(window.location.search);
+            const next = params.get('next');
+            const destination = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
+            window.setTimeout(() => { window.location.href = destination; }, 350);
         } catch (error) {
             setStatus(status, error.message || 'Network error.', 'error');
             submit.disabled = false;
@@ -1065,6 +1075,321 @@ function initAvatar() {
         });
 }
 
+function gameHref(game) {
+    return `/games/${game.id}`;
+}
+
+function formatGameCount(value, singular, plural) {
+    const count = Number(value || 0);
+    return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function statTile(label, value) {
+    const row = document.createElement('div');
+    row.className = 'stat-tile';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const strong = document.createElement('strong');
+    strong.textContent = value;
+    row.append(name, strong);
+    return row;
+}
+
+function createGameCard(game) {
+    const card = document.createElement('article');
+    card.className = 'game-card';
+
+    const media = document.createElement('a');
+    media.className = 'game-card-media';
+    media.href = gameHref(game);
+    media.setAttribute('aria-label', `${game.title} details`);
+
+    const banner = document.createElement('img');
+    banner.src = game.bannerUrl || '/assets/games/default-game-banner.png';
+    banner.alt = '';
+    banner.loading = 'lazy';
+    media.appendChild(banner);
+
+    const body = document.createElement('div');
+    body.className = 'game-card-body';
+
+    const icon = document.createElement('img');
+    icon.className = 'game-icon';
+    icon.src = game.iconUrl || '/assets/games/default-game-icon.png';
+    icon.alt = '';
+    icon.loading = 'lazy';
+
+    const text = document.createElement('div');
+    text.className = 'game-card-text';
+
+    const title = document.createElement('a');
+    title.className = 'game-title-link';
+    title.href = gameHref(game);
+    title.textContent = game.title;
+
+    const meta = document.createElement('p');
+    meta.className = 'game-meta';
+    meta.textContent = `By ${game.ownerUsername} - ${formatGameCount(game.stats?.partsCount, 'part', 'parts')} - ${formatDate(game.createdAt)}`;
+
+    const description = document.createElement('p');
+    description.className = 'game-description';
+    description.textContent = game.description || 'No description yet.';
+
+    const actions = document.createElement('div');
+    actions.className = 'game-card-actions';
+    const details = document.createElement('a');
+    details.className = 'button small';
+    details.href = gameHref(game);
+    details.textContent = 'Open';
+    actions.appendChild(details);
+
+    text.append(title, meta, description, actions);
+    body.append(icon, text);
+    card.append(media, body);
+    return card;
+}
+
+function renderGameCards(container, games, emptyText) {
+    if (!container) return;
+    container.innerHTML = '';
+    if (!games || games.length === 0) {
+        container.appendChild(emptyMessage(emptyText));
+        return;
+    }
+    games.forEach((game) => container.appendChild(createGameCard(game)));
+}
+
+async function initGamesPage() {
+    const root = document.querySelector('[data-games-page]');
+    if (!root) return;
+
+    const list = document.querySelector('[data-games-list]');
+    const status = document.querySelector('[data-games-status]');
+    list.appendChild(emptyMessage('Loading games'));
+
+    try {
+        const { response, data } = await getJson('/api/games');
+        if (!response.ok || !data.success) throw new Error(data.error || 'Could not load games.');
+        renderGameCards(list, data.games, 'No public games have been published yet.');
+    } catch (error) {
+        list.innerHTML = '';
+        setStatus(status, error.message || 'Could not load games.', 'error');
+    }
+}
+
+function createMyGameRow(game) {
+    const row = document.createElement('article');
+    row.className = 'my-game-row';
+
+    const icon = document.createElement('img');
+    icon.className = 'game-icon small-icon';
+    icon.src = game.iconUrl || '/assets/games/default-game-icon.png';
+    icon.alt = '';
+
+    const text = document.createElement('div');
+    const title = document.createElement('a');
+    title.className = 'game-title-link';
+    title.href = gameHref(game);
+    title.textContent = game.title;
+    const meta = document.createElement('p');
+    meta.className = 'game-meta';
+    meta.textContent = `${game.isPublic ? 'Public' : 'Private'} - ${formatGameCount(game.stats?.partsCount, 'part', 'parts')} - Updated ${formatDate(game.updatedAt)}`;
+    text.append(title, meta);
+
+    row.append(icon, text);
+    return row;
+}
+
+async function loadMyGames(container, status) {
+    if (!container) return;
+    container.innerHTML = '';
+    container.appendChild(emptyMessage('Loading your games'));
+
+    const { response, data } = await getJson('/api/games/mine', getToken());
+    if (!response.ok || !data.success) throw new Error(data.error || 'Could not load your games.');
+
+    container.innerHTML = '';
+    if (data.games.length === 0) {
+        container.appendChild(emptyMessage('No games published yet.'));
+        return;
+    }
+    data.games.forEach((game) => container.appendChild(createMyGameRow(game)));
+    setStatus(status, '', '');
+}
+
+function initCreateGamePage() {
+    const root = document.querySelector('[data-create-game-page]');
+    if (!root) return;
+
+    const form = document.querySelector('[data-create-game-form]');
+    const status = document.querySelector('[data-create-game-status]');
+    const myGames = document.querySelector('[data-my-games-list]');
+    const submit = form.querySelector('button[type="submit"]');
+
+    requireSession()
+        .then((session) => {
+            if (!session) return;
+            return loadMyGames(myGames, status);
+        })
+        .catch((error) => {
+            setStatus(status, error.message || 'Could not load creator data.', 'error');
+        });
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        setStatus(status, '', '');
+
+        const file = form.elements.world.files[0];
+        if (!file) {
+            setStatus(status, 'Choose a .world file.', 'error');
+            return;
+        }
+
+        submit.disabled = true;
+        submit.textContent = 'Publishing';
+
+        try {
+            const worldText = await file.text();
+            const body = {
+                title: form.elements.title.value,
+                description: form.elements.description.value,
+                isPublic: form.elements.isPublic.checked,
+                worldText
+            };
+            const { response, data } = await postJson('/api/games', body, getToken());
+            if (!response.ok || !data.success) throw new Error(data.error || 'Publish failed.');
+            setStatus(status, 'Game published.', 'success');
+            form.reset();
+            form.elements.isPublic.checked = true;
+            await loadMyGames(myGames, status);
+            window.history.replaceState(null, '', `/create?published=${data.game.id}`);
+        } catch (error) {
+            setStatus(status, error.message || 'Publish failed.', 'error');
+        } finally {
+            submit.disabled = false;
+            submit.textContent = 'Publish game';
+        }
+    });
+}
+
+function selectedGameId() {
+    const match = window.location.pathname.match(/^\/games\/(\d+)/);
+    return match ? Number(match[1]) : 0;
+}
+
+function renderServerList(container, servers) {
+    if (!container) return;
+    container.innerHTML = '';
+    if (!servers || servers.length === 0) {
+        container.appendChild(emptyMessage('No live servers yet.'));
+        return;
+    }
+
+    for (const server of servers) {
+        const row = document.createElement('article');
+        row.className = 'server-row';
+        const address = document.createElement('strong');
+        address.textContent = `${server.host}:${server.port}`;
+        const meta = document.createElement('span');
+        meta.textContent = `${server.status}${server.processId ? ` - PID ${server.processId}` : ''}`;
+        row.append(address, meta);
+        container.appendChild(row);
+    }
+}
+
+function renderGameStats(container, game) {
+    if (!container) return;
+    container.innerHTML = '';
+    const rows = [
+        ['Parts', String(game.stats?.partsCount || 0)],
+        ['Dynamic', String(game.stats?.dynamicPartsCount || 0)],
+        ['Spawns', String(game.stats?.spawnCount || 0)],
+        ['Created', formatDate(game.createdAt)],
+        ['Updated', formatDate(game.updatedAt)],
+        ['Plays', String(game.stats?.launchCount || 0)]
+    ];
+    rows.forEach(([label, value]) => container.appendChild(statTile(label, value)));
+}
+
+function initGamePage() {
+    const root = document.querySelector('[data-game-page]');
+    if (!root) return;
+
+    const gameId = selectedGameId();
+    const title = document.querySelector('[data-game-title]');
+    const owner = document.querySelector('[data-game-owner]');
+    const description = document.querySelector('[data-game-description]');
+    const banner = document.querySelector('[data-game-banner]');
+    const stats = document.querySelector('[data-game-stats]');
+    const servers = document.querySelector('[data-game-servers]');
+    const status = document.querySelector('[data-game-status]');
+    const playButton = document.querySelector('[data-play-game]');
+    const launchCommand = document.querySelector('[data-launch-command]');
+    let currentGame = null;
+
+    async function loadGame() {
+        if (!gameId) {
+            setStatus(status, 'Game not found.', 'error');
+            return;
+        }
+
+        const { response, data } = await getJson(`/api/games/${gameId}`, getToken());
+        if (response.status === 404) {
+            setStatus(status, 'Game not found.', 'error');
+            return;
+        }
+        if (!response.ok || !data.success) throw new Error(data.error || 'Could not load game.');
+
+        currentGame = data.game;
+        document.title = `${currentGame.title} - RBLX Clone`;
+        title.textContent = currentGame.title;
+        owner.textContent = `By ${currentGame.ownerUsername}`;
+        description.textContent = currentGame.description || 'No description yet.';
+        banner.src = currentGame.bannerUrl || '/assets/games/default-game-banner.png';
+        renderGameStats(stats, currentGame);
+        renderServerList(servers, data.servers);
+    }
+
+    playButton.addEventListener('click', async () => {
+        if (!currentGame) return;
+        const token = getToken();
+        if (!token) {
+            window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+            return;
+        }
+
+        playButton.disabled = true;
+        playButton.textContent = 'Starting';
+        setStatus(status, '', '');
+
+        try {
+            const { response, data } = await postJson(`/api/games/${currentGame.id}/play`, { launchClient: true }, token);
+            if (!response.ok || !data.success) throw new Error(data.error || 'Could not start game.');
+
+            if (launchCommand) {
+                launchCommand.hidden = false;
+                launchCommand.textContent = data.launch.command;
+            }
+
+            const launchStatus = data.player?.launched
+                ? `Player opening on ${data.server.host}:${data.server.port}.`
+                : `Server ready on ${data.server.host}:${data.server.port}.`;
+            setStatus(status, launchStatus, 'success');
+            renderServerList(servers, [data.server]);
+            await loadGame();
+        } catch (error) {
+            setStatus(status, error.message || 'Could not start game.', 'error');
+        } finally {
+            playButton.disabled = false;
+            playButton.textContent = 'Play';
+        }
+    });
+
+    loadGame().catch((error) => {
+        setStatus(status, error.message || 'Could not load game.', 'error');
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initLogoutButtons();
     initLogin();
@@ -1073,4 +1398,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initSearch();
     initProfilePage();
     initAvatar();
+    initGamesPage();
+    initCreateGamePage();
+    initGamePage();
 });

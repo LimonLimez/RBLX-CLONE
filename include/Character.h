@@ -22,6 +22,7 @@ public:
     
     // Remote Control
     void setRemoteState(glm::vec3 pos, float yaw, bool walking, bool jumping);
+    void setRemoteControlled(bool remote);
     bool isRemote;
     bool isJumping; // Added member
 

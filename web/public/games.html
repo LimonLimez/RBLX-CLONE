@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Games - RBLX Clone</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page" data-games-page>
+        <header class="topbar">
+            <a class="brand" href="/">
+                <span>RBLX Clone</span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <a href="/games">Games</a>
+                <a href="/create">Create</a>
+                <a href="/dashboard">Dashboard</a>
+                <a href="/login">Login</a>
+            </nav>
+        </header>
+
+        <main id="main">
+            <div class="dashboard-head">
+                <div>
+                    <p class="label">Discover</p>
+                    <h1 class="page-title">Games</h1>
+                </div>
+                <a class="button" href="/create">Publish</a>
+            </div>
+
+            <div class="status" data-games-status aria-live="polite"></div>
+            <section class="game-grid" data-games-list aria-label="Public games"></section>
+        </main>
+    </div>
+    <script src="/app.js?v=games-1" defer></script>
+</body>
+</html>

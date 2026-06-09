@@ -10,6 +10,9 @@
 #include "Raycaster.h"
 #include "ShadowMap.h"
 #include "WorldLoader.h"
+#ifdef _WIN32
+#include "Auth.h"
+#endif
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -25,6 +28,8 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -85,6 +90,94 @@ namespace {
         }
 
         return true;
+    }
+
+    std::string readTextFile(const std::string& filename) {
+        std::ifstream in(filename, std::ios::binary);
+        if (!in.is_open()) {
+            return "";
+        }
+
+        return std::string(
+            std::istreambuf_iterator<char>(in),
+            std::istreambuf_iterator<char>()
+        );
+    }
+
+    std::string readTokenFile() {
+        std::ifstream in("auth_token.txt");
+        std::string token;
+        if (in.is_open()) {
+            std::getline(in, token);
+        }
+        return token;
+    }
+
+    void writeTokenFile(const std::string& token) {
+        std::ofstream out("auth_token.txt");
+        if (out.is_open()) {
+            out << token;
+        }
+    }
+
+    std::string jsonStringField(const std::string& json, const std::string& field) {
+        const std::string needle = "\"" + field + "\":\"";
+        size_t pos = json.find(needle);
+        if (pos == std::string::npos) return "";
+        pos += needle.size();
+        size_t end = json.find('"', pos);
+        if (end == std::string::npos) return "";
+        return json.substr(pos, end - pos);
+    }
+
+    std::string loginForPublish(const std::string& webUrl, const std::string& username, const std::string& password) {
+#ifdef _WIN32
+        const std::string response = Auth::login(username, password, webUrl);
+        if (response.empty() || response.find("\"success\":true") == std::string::npos) {
+            return "";
+        }
+
+        return jsonStringField(response, "token");
+#else
+        (void)webUrl;
+        (void)username;
+        (void)password;
+        return "";
+#endif
+    }
+
+    bool publishWorld(
+        const std::string& webUrl,
+        const std::string& token,
+        const std::string& title,
+        const std::string& description,
+        bool isPublic,
+        const std::string& worldText,
+        std::string& response
+    ) {
+#ifdef _WIN32
+        if (token.empty() || worldText.empty()) {
+            return false;
+        }
+
+        std::ostringstream body;
+        body << "{\"title\":\"" << Auth::jsonEscape(title) << "\","
+             << "\"description\":\"" << Auth::jsonEscape(description) << "\","
+             << "\"isPublic\":" << (isPublic ? "true" : "false") << ","
+             << "\"worldText\":\"" << Auth::jsonEscape(worldText) << "\"}";
+
+        response = Auth::httpPost(webUrl + "/api/games/publish", body.str(), token);
+        return !response.empty() && response.find("\"success\":true") != std::string::npos;
+#else
+        (void)webUrl;
+        (void)token;
+        (void)title;
+        (void)description;
+        (void)isPublic;
+        (void)worldText;
+        response = "";
+        return false;
+#endif
     }
 
     glm::mat4 partToMatrix(const Part& part) {
@@ -169,6 +262,13 @@ int main() {
         float snap[3] = { 1.0f, 1.0f, 1.0f };
         char worldPath[260] = "ServerWorld.world";
         std::string statusMessage = "Studio ready";
+        char publishWebUrl[128] = "http://localhost:3000";
+        char publishTitle[64] = "Starter Baseplate";
+        char publishDescription[241] = "";
+        char publishUsername[32] = "";
+        char publishPassword[64] = "";
+        bool publishPublic = true;
+        std::string publishStatus = "Sign in to publish";
 
         float lastFrame = static_cast<float>(glfwGetTime());
         double lastMouseX = WINDOW_WIDTH / 2.0;
@@ -229,6 +329,48 @@ int main() {
             ImGui::Checkbox("Snap", &snapEnabled);
             ImGui::InputFloat3("Snap values", snap);
             ImGui::TextWrapped("%s", statusMessage.c_str());
+            ImGui::End();
+
+            ImGui::Begin("Publish");
+            ImGui::InputText("Web URL", publishWebUrl, sizeof(publishWebUrl));
+            ImGui::InputText("Username", publishUsername, sizeof(publishUsername));
+            ImGui::InputText("Password", publishPassword, sizeof(publishPassword), ImGuiInputTextFlags_Password);
+            if (ImGui::Button("Login")) {
+                const std::string token = loginForPublish(publishWebUrl, publishUsername, publishPassword);
+                if (token.empty()) {
+                    publishStatus = "Login failed";
+                } else {
+                    writeTokenFile(token);
+                    publishStatus = "Logged in for publishing";
+                }
+            }
+            ImGui::Separator();
+            ImGui::InputText("Game title", publishTitle, sizeof(publishTitle));
+            ImGui::InputTextMultiline("Description", publishDescription, sizeof(publishDescription), ImVec2(0.0f, 72.0f));
+            ImGui::Checkbox("Public", &publishPublic);
+            if (ImGui::Button("Publish current world")) {
+                if (!saveWorld(worldPath, parts)) {
+                    publishStatus = std::string("Could not save ") + worldPath;
+                } else {
+                    const std::string token = readTokenFile();
+                    const std::string worldText = readTextFile(worldPath);
+                    std::string response;
+                    if (publishWorld(publishWebUrl, token, publishTitle, publishDescription, publishPublic, worldText, response)) {
+                        publishStatus = "Published to site";
+                    } else if (token.empty()) {
+                        publishStatus = "Login before publishing";
+                    } else {
+                        publishStatus = "Publish failed";
+                    }
+                }
+            }
+#ifdef _WIN32
+            ImGui::SameLine();
+            if (ImGui::Button("Open site")) {
+                Auth::openBrowser(std::string(publishWebUrl) + "/create");
+            }
+#endif
+            ImGui::TextWrapped("%s", publishStatus.c_str());
             ImGui::End();
 
             ImGui::Begin("Explorer");
