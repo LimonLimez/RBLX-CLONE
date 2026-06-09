@@ -88,15 +88,6 @@ input {
     text-decoration: none;
 }
 
-.brand-mark {
-    width: 1.15rem;
-    height: 1.15rem;
-    border: 2px solid var(--line);
-    display: inline-block;
-    transform: rotate(45deg);
-    background: var(--bg);
-}
-
 .nav {
     display: flex;
     align-items: center;
@@ -309,12 +300,6 @@ input {
     margin-bottom: var(--space-4);
 }
 
-.dashboard-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-3);
-}
-
 .avatar-layout {
     display: grid;
     grid-template-columns: minmax(260px, 0.9fr) minmax(280px, 1.1fr);
@@ -419,7 +404,6 @@ input {
 
     .hero,
     .grid,
-    .dashboard-grid,
     .avatar-layout {
         grid-template-columns: 1fr;
     }

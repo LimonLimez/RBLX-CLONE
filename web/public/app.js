@@ -118,8 +118,7 @@ function initDashboard() {
     const dashboard = document.querySelector('[data-dashboard]');
     if (!dashboard) return;
 
-    const username = document.querySelector('[data-username]');
-    const userId = document.querySelector('[data-user-id]');
+    const welcomeHeading = document.querySelector('[data-welcome-heading]');
     const logout = document.querySelector('[data-logout]');
 
     logout?.addEventListener('click', () => {
@@ -133,8 +132,7 @@ function initDashboard() {
                 window.location.href = '/login';
                 return;
             }
-            username.textContent = session.username;
-            userId.textContent = session.userId;
+            if (welcomeHeading) welcomeHeading.textContent = `Welcome, ${session.username}`;
         })
         .catch(() => {
             clearSession();

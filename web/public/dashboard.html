@@ -11,10 +11,10 @@
     <div class="page" data-dashboard>
         <header class="topbar">
             <a class="brand" href="/">
-                <span class="brand-mark" aria-hidden="true"></span>
                 <span>RBLX Clone</span>
             </a>
             <nav class="nav" aria-label="Primary">
+                <a href="/dashboard">Profile</a>
                 <a href="/avatar">Avatar</a>
                 <button class="button danger" type="button" data-logout>Logout</button>
             </nav>
@@ -24,25 +24,9 @@
             <div class="dashboard-head">
                 <div>
                     <p class="label">Dashboard</p>
-                    <h1 class="page-title">Account</h1>
-                </div>
-                <div class="panel">
-                    <div class="label">Signed in as</div>
-                    <div class="value" data-username>Loading</div>
-                    <div class="label">User ID</div>
-                    <div class="value" data-user-id>-</div>
+                    <h1 class="page-title" data-welcome-heading>Welcome</h1>
                 </div>
             </div>
-
-            <section class="dashboard-grid">
-                <article class="panel">
-                    <h2>Avatar</h2>
-                    <p>Use the avatar editor to save body colors for the player client.</p>
-                    <div class="actions">
-                        <a class="button" href="/avatar">Open avatar editor</a>
-                    </div>
-                </article>
-            </section>
         </main>
     </div>
     <script src="/app.js" defer></script>
