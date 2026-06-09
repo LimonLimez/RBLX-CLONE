@@ -26,7 +26,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
+#include <iomanip>
 
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
@@ -190,16 +193,32 @@ char authToken[256] = "";
 char loginUsername[32] = "";
 char loginPassword[64] = "";
 char webServerUrl[128] = "http://localhost:3000";
+const char* DEFAULT_WEB_SERVER_URL = "http://localhost:3000";
+const char* DEFAULT_GAME_SERVER_IP = "127.0.0.1";
 bool showLoginError = false;
 char loginErrorMsg[256] = "";
 bool showConnectionUI = false; // Track if connection UI should be shown
 bool autoConnectOnStart = false;
 int launchGameId = 0;
+bool showDebugGui = false;
+bool waitingForWebLogin = false;
+SOCKET authListenSocket = INVALID_SOCKET;
+SOCKET authClientSocket = INVALID_SOCKET;
+int authCallbackPort = 0;
+std::string authCallbackBuffer;
+char chatInput[256] = "";
+
+struct ChatLine {
+    std::string username;
+    std::string message;
+    bool system = false;
+};
 
 std::map<int, Character*> remotePlayers;
 std::map<int, std::string> playerNames;
 std::vector<PlayerInfo> playerList;
 std::vector<char> clientReceiveBuffer;
+std::vector<ChatLine> chatLines;
 
 Character* myCharacter = nullptr;
 AvatarConfig currentAvatar;
@@ -259,6 +278,265 @@ std::string jsonStringField(const std::string& json, const std::string& name) {
     return json.substr(pos + 1, end - pos - 1);
 }
 
+void copyToBuffer(char* destination, size_t destinationSize, const std::string& value) {
+    if (!destination || destinationSize == 0) return;
+    std::memset(destination, 0, destinationSize);
+    std::memcpy(destination, value.c_str(), std::min(destinationSize - 1, value.size()));
+}
+
+std::string automaticWebServerUrl() {
+    if (std::strlen(webServerUrl) == 0) {
+        copyToBuffer(webServerUrl, sizeof(webServerUrl), DEFAULT_WEB_SERVER_URL);
+    }
+    return std::string(webServerUrl);
+}
+
+const char* automaticGameServerIp() {
+    if (std::strlen(serverIP) == 0) {
+        copyToBuffer(serverIP, sizeof(serverIP), DEFAULT_GAME_SERVER_IP);
+    }
+    return serverIP;
+}
+
+void addChatLine(const std::string& username, const std::string& message, bool system = false) {
+    if (message.empty()) return;
+    chatLines.push_back({username, message, system});
+    if (chatLines.size() > 80) {
+        chatLines.erase(chatLines.begin(), chatLines.begin() + static_cast<std::ptrdiff_t>(chatLines.size() - 80));
+    }
+}
+
+std::string urlEncode(const std::string& value) {
+    std::ostringstream encoded;
+    encoded << std::uppercase << std::hex;
+    for (unsigned char c : value) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded << c;
+        } else {
+            encoded << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+            encoded << std::setfill(' ');
+        }
+    }
+    return encoded.str();
+}
+
+std::string urlDecode(const std::string& value) {
+    std::string decoded;
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '+' ) {
+            decoded.push_back(' ');
+        } else if (value[i] == '%' && i + 2 < value.size()) {
+            const std::string hex = value.substr(i + 1, 2);
+            char* end = nullptr;
+            long character = std::strtol(hex.c_str(), &end, 16);
+            if (end && *end == '\0') {
+                decoded.push_back(static_cast<char>(character));
+                i += 2;
+            } else {
+                decoded.push_back(value[i]);
+            }
+        } else {
+            decoded.push_back(value[i]);
+        }
+    }
+    return decoded;
+}
+
+std::string queryParam(const std::string& request, const std::string& name) {
+    const size_t requestStart = request.find("GET ");
+    if (requestStart == std::string::npos) return {};
+    const size_t pathStart = requestStart + 4;
+    const size_t pathEnd = request.find(' ', pathStart);
+    if (pathEnd == std::string::npos) return {};
+
+    const std::string path = request.substr(pathStart, pathEnd - pathStart);
+    const size_t queryStart = path.find('?');
+    if (queryStart == std::string::npos) return {};
+
+    const std::string query = path.substr(queryStart + 1);
+    const std::string prefix = name + "=";
+    size_t pos = 0;
+    while (pos <= query.size()) {
+        const size_t next = query.find('&', pos);
+        const std::string pair = query.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
+        if (pair.rfind(prefix, 0) == 0) {
+            return urlDecode(pair.substr(prefix.size()));
+        }
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
+    return {};
+}
+
+bool parseJsonColorArray(const std::string& json, const std::string& name, glm::vec3& color) {
+    size_t pos = json.find("\"" + name + "\":[");
+    if (pos == std::string::npos) return false;
+
+    pos = json.find("[", pos);
+    if (pos == std::string::npos) return false;
+
+    size_t end = json.find("]", pos);
+    if (end == std::string::npos || end <= pos) return false;
+
+    std::string colorStr = json.substr(pos + 1, end - pos - 1);
+    size_t comma1 = colorStr.find(",");
+    size_t comma2 = colorStr.find(",", comma1 + 1);
+    if (comma1 == std::string::npos || comma2 == std::string::npos) return false;
+
+    try {
+        color.r = std::stof(colorStr.substr(0, comma1));
+        color.g = std::stof(colorStr.substr(comma1 + 1, comma2 - comma1 - 1));
+        color.b = std::stof(colorStr.substr(comma2 + 1));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void fetchAvatarForToken(const std::string& token, const std::string& serverUrl) {
+    std::string avatarResponse = Auth::getAvatar(token, serverUrl);
+    if (!avatarResponse.empty() && avatarResponse.find("\"success\":true") != std::string::npos) {
+        parseJsonColorArray(avatarResponse, "headColor", currentAvatar.headColor);
+        parseJsonColorArray(avatarResponse, "torsoColor", currentAvatar.torsoColor);
+        parseJsonColorArray(avatarResponse, "leftArmColor", currentAvatar.leftArmColor);
+        parseJsonColorArray(avatarResponse, "rightArmColor", currentAvatar.rightArmColor);
+        parseJsonColorArray(avatarResponse, "leftLegColor", currentAvatar.leftLegColor);
+        parseJsonColorArray(avatarResponse, "rightLegColor", currentAvatar.rightLegColor);
+        currentAvatar.faceId = normalizeFaceId(jsonStringField(avatarResponse, "faceId"));
+        currentAvatar.saveToFile("avatar.txt");
+    }
+}
+
+bool applyAuthSession(const std::string& token, const std::string& fallbackUsername, const std::string& serverUrl, bool saveToken, std::string& error) {
+    if (token.empty()) {
+        error = "No token came back from the website.";
+        return false;
+    }
+
+    std::string verifyResponse = Auth::verifyToken(token, serverUrl);
+    if (verifyResponse.empty() || verifyResponse.find("\"success\":true") == std::string::npos) {
+        error = "The website login could not be verified.";
+        return false;
+    }
+
+    const std::string verifiedUsername = jsonStringField(verifyResponse, "username");
+    copyToBuffer(authToken, sizeof(authToken), token);
+    copyToBuffer(myUsername, sizeof(myUsername), verifiedUsername.empty() ? fallbackUsername : verifiedUsername);
+
+    if (saveToken) {
+        std::ofstream tokenFile("auth_token.txt");
+        if (tokenFile.is_open()) {
+            tokenFile << token;
+        }
+    }
+
+    fetchAvatarForToken(token, serverUrl);
+    return true;
+}
+
+void closeAuthCallback() {
+    if (authClientSocket != INVALID_SOCKET) {
+        closesocket(authClientSocket);
+        authClientSocket = INVALID_SOCKET;
+    }
+    if (authListenSocket != INVALID_SOCKET) {
+        closesocket(authListenSocket);
+        authListenSocket = INVALID_SOCKET;
+    }
+    waitingForWebLogin = false;
+    authCallbackPort = 0;
+    authCallbackBuffer.clear();
+}
+
+bool startAuthCallback(std::string& loginUrl, std::string& error) {
+    closeAuthCallback();
+
+    for (int port = 39170; port < 39190; ++port) {
+        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) continue;
+
+        sockaddr_in addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<u_short>(port));
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+        if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            closesocket(s);
+            continue;
+        }
+
+        if (listen(s, 1) == SOCKET_ERROR) {
+            closesocket(s);
+            continue;
+        }
+
+        Network::setNonBlocking(s);
+        authListenSocket = s;
+        authCallbackPort = port;
+        waitingForWebLogin = true;
+        const std::string redirect = "http://127.0.0.1:" + std::to_string(port) + "/auth";
+        loginUrl = automaticWebServerUrl() + "/login?client=player&redirect=" + urlEncode(redirect);
+        return true;
+    }
+
+    error = "Could not open a local login callback port.";
+    return false;
+}
+
+void sendAuthCallbackResponse(SOCKET socket, bool success) {
+    const char* body = success
+        ? "<!doctype html><title>RBLX Player</title><h1>Signed in</h1><p>You can return to the player.</p>"
+        : "<!doctype html><title>RBLX Player</title><h1>Login failed</h1><p>Please return to the player and try again.</p>";
+    std::ostringstream response;
+    response << "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
+             << std::strlen(body) << "\r\nConnection: close\r\n\r\n" << body;
+    const std::string payload = response.str();
+    send(socket, payload.c_str(), static_cast<int>(payload.size()), 0);
+}
+
+void pollAuthCallback() {
+    if (!waitingForWebLogin || authListenSocket == INVALID_SOCKET) return;
+
+    if (authClientSocket == INVALID_SOCKET) {
+        sockaddr_in clientAddr;
+        int clientLen = sizeof(clientAddr);
+        SOCKET accepted = accept(authListenSocket, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
+        if (accepted == INVALID_SOCKET) return;
+        Network::setNonBlocking(accepted);
+        authClientSocket = accepted;
+    }
+
+    char buffer[2048];
+    int received = recv(authClientSocket, buffer, sizeof(buffer), 0);
+    if (received == SOCKET_ERROR) {
+        const int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK) return;
+        closeAuthCallback();
+        return;
+    }
+    if (received <= 0) return;
+
+    authCallbackBuffer.append(buffer, buffer + received);
+    if (authCallbackBuffer.find("\r\n\r\n") == std::string::npos) return;
+
+    std::string error;
+    const std::string token = queryParam(authCallbackBuffer, "token");
+    const std::string username = queryParam(authCallbackBuffer, "username");
+    const bool success = applyAuthSession(token, username, automaticWebServerUrl(), true, error);
+    sendAuthCallbackResponse(authClientSocket, success);
+    if (success) {
+        showLoginError = false;
+        currentState = MENU_PLAY_CHOICE;
+        showConnectionUI = false;
+        addChatLine("System", "Signed in as " + std::string(myUsername) + ".", true);
+    } else {
+        showLoginError = true;
+        copyToBuffer(loginErrorMsg, sizeof(loginErrorMsg), error);
+    }
+    closeAuthCallback();
+}
+
 // Interpolation Struct
 struct NetworkTransform {
     glm::vec3 position;
@@ -269,6 +547,447 @@ struct NetworkTransform {
 std::map<int, NetworkTransform> targetTransforms;
 std::map<int, NetworkTransform> startTransforms;
 float interpolationTime = 0.1f; // 100ms buffer
+
+std::string openFileDialog(GLFWwindow* window);
+
+void applyModernPlayerStyle() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 18.0f;
+    style.ChildRounding = 14.0f;
+    style.FrameRounding = 10.0f;
+    style.PopupRounding = 12.0f;
+    style.ScrollbarRounding = 12.0f;
+    style.GrabRounding = 10.0f;
+    style.WindowBorderSize = 0.0f;
+    style.FrameBorderSize = 0.0f;
+    style.WindowPadding = ImVec2(18.0f, 18.0f);
+    style.FramePadding = ImVec2(12.0f, 10.0f);
+    style.ItemSpacing = ImVec2(12.0f, 12.0f);
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_WindowBg] = ImVec4(0.045f, 0.052f, 0.070f, 0.92f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.070f, 0.078f, 0.102f, 0.88f);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.050f, 0.056f, 0.074f, 0.96f);
+    colors[ImGuiCol_Border] = ImVec4(1.0f, 1.0f, 1.0f, 0.10f);
+    colors[ImGuiCol_Text] = ImVec4(0.94f, 0.96f, 1.0f, 1.0f);
+    colors[ImGuiCol_TextDisabled] = ImVec4(0.55f, 0.59f, 0.66f, 1.0f);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.105f, 0.118f, 0.150f, 0.96f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.145f, 0.165f, 0.210f, 1.0f);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.180f, 0.210f, 0.270f, 1.0f);
+    colors[ImGuiCol_Button] = ImVec4(0.135f, 0.325f, 0.850f, 1.0f);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.185f, 0.395f, 0.940f, 1.0f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.090f, 0.245f, 0.700f, 1.0f);
+    colors[ImGuiCol_Header] = ImVec4(0.135f, 0.325f, 0.850f, 0.65f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.185f, 0.395f, 0.940f, 0.80f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.090f, 0.245f, 0.700f, 0.95f);
+    colors[ImGuiCol_PlotHistogram] = ImVec4(0.105f, 0.850f, 0.505f, 1.0f);
+}
+
+ImGuiWindowFlags overlayFlags() {
+    return ImGuiWindowFlags_NoDecoration |
+           ImGuiWindowFlags_NoSavedSettings |
+           ImGuiWindowFlags_NoFocusOnAppearing |
+           ImGuiWindowFlags_NoNav |
+           ImGuiWindowFlags_NoMove;
+}
+
+void drawLabel(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.56f, 0.64f, 0.76f, 1.0f));
+    ImGui::TextUnformatted(text);
+    ImGui::PopStyleColor();
+}
+
+bool modernButton(const char* label, const ImVec2& size, const ImVec4& color) {
+    ImGui::PushStyleColor(ImGuiCol_Button, color);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(std::min(color.x + 0.08f, 1.0f), std::min(color.y + 0.08f, 1.0f), std::min(color.z + 0.08f, 1.0f), color.w));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(std::max(color.x - 0.06f, 0.0f), std::max(color.y - 0.06f, 0.0f), std::max(color.z - 0.06f, 0.0f), color.w));
+    bool pressed = ImGui::Button(label, size);
+    ImGui::PopStyleColor(3);
+    return pressed;
+}
+
+void disconnectFromServerOnly() {
+    if (clientSocket != INVALID_SOCKET) {
+        closesocket(clientSocket);
+        clientSocket = INVALID_SOCKET;
+    }
+    isConnected = false;
+    myPlayerId = -1;
+    showConnectionUI = false;
+    clientReceiveBuffer.clear();
+}
+
+void leaveCurrentGame(std::deque<Part>& parts, PhysicsWorld& physicsWorld) {
+    disconnectFromServerOnly();
+    if (myCharacter) {
+        delete myCharacter;
+        myCharacter = nullptr;
+    }
+    for (auto& [id, remoteChar] : remotePlayers) {
+        if (remoteChar) delete remoteChar;
+    }
+    remotePlayers.clear();
+    playerNames.clear();
+    playerList.clear();
+    targetTransforms.clear();
+    startTransforms.clear();
+    physicsWorld.reset();
+    parts.clear();
+    currentState = MENU_PLAY_CHOICE;
+    addChatLine("System", "Left the game.", true);
+}
+
+bool connectToServer(std::string& error) {
+    disconnectFromServerOnly();
+    clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (clientSocket == INVALID_SOCKET) {
+        error = "Could not create network socket.";
+        return false;
+    }
+
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    if (inet_pton(AF_INET, automaticGameServerIp(), &serverAddr.sin_addr) != 1) {
+        error = "Could not find the game server.";
+        disconnectFromServerOnly();
+        return false;
+    }
+    serverAddr.sin_port = htons(static_cast<u_short>(serverPort));
+
+    if (connect(clientSocket, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) == SOCKET_ERROR) {
+        error = "Could not connect to the game server.";
+        disconnectFromServerOnly();
+        return false;
+    }
+
+    isConnected = true;
+    currentState = ONLINE;
+    Network::setNonBlocking(clientSocket);
+
+    PacketConnect pkt;
+    std::memset(&pkt, 0, sizeof(pkt));
+    if (std::strlen(authToken) > 0) {
+        copyToBuffer(pkt.username, sizeof(pkt.username), myUsername);
+        copyToBuffer(pkt.authToken, sizeof(pkt.authToken), authToken);
+    } else {
+        copyToBuffer(pkt.username, sizeof(pkt.username), "Guest");
+    }
+
+    if (!Network::sendStructPacket(clientSocket, PacketType::CONNECT, pkt)) {
+        error = "Connected, but could not send the join packet.";
+        disconnectFromServerOnly();
+        currentState = MENU_PLAY_CHOICE;
+        return false;
+    }
+
+    showConnectionUI = false;
+    addChatLine("System", "Joining online game...", true);
+    return true;
+}
+
+void sendChatMessage() {
+    std::string message = chatInput;
+    message.erase(message.begin(), std::find_if(message.begin(), message.end(), [](unsigned char c) { return !std::isspace(c); }));
+    message.erase(std::find_if(message.rbegin(), message.rend(), [](unsigned char c) { return !std::isspace(c); }).base(), message.end());
+    if (message.empty()) return;
+
+    if (currentState == ONLINE && isConnected && clientSocket != INVALID_SOCKET) {
+        PacketChat chat;
+        std::memset(&chat, 0, sizeof(chat));
+        chat.playerId = myPlayerId;
+        copyToBuffer(chat.username, sizeof(chat.username), myUsername);
+        copyToBuffer(chat.message, sizeof(chat.message), message);
+        if (!Network::sendStructPacket(clientSocket, PacketType::CHAT, chat)) {
+            addChatLine("System", "Could not send chat message.", true);
+        }
+    } else {
+        addChatLine("System", "Chat is available after joining an online game.", true);
+    }
+    chatInput[0] = '\0';
+}
+
+void renderDebugWindow(const ImGuiIO& io) {
+    if (!showDebugGui) return;
+
+    ImGui::Begin("Debug Info", &showDebugGui);
+    ImGui::Text("FPS: %.1f", io.Framerate);
+    ImGui::Separator();
+
+    if (currentState == ONLINE || currentState == OFFLINE) {
+        ImGui::Text("=== CAMERA ===");
+        ImGui::Text("Position: (%.2f, %.2f, %.2f)", camera.Position.x, camera.Position.y, camera.Position.z);
+        ImGui::Text("Yaw: %.2f", camera.Yaw);
+        ImGui::Text("Pitch: %.2f", camera.Pitch);
+        ImGui::Separator();
+
+        if (myCharacter) {
+            ImGui::Text("=== PLAYER (Local) ===");
+            glm::vec3 pos = myCharacter->getPosition();
+            ImGui::Text("Position: (%.2f, %.2f, %.2f)", pos.x, pos.y, pos.z);
+            ImGui::Text("Internal Yaw: %.2f", myCharacter->debugCurrentYaw);
+            ImGui::Text("Target Yaw: %.2f", myCharacter->debugTargetYaw);
+            ImGui::Text("Move Dir: (%.2f, %.2f, %.2f)",
+                myCharacter->debugMoveDir.x,
+                myCharacter->debugMoveDir.y,
+                myCharacter->debugMoveDir.z);
+
+            if (currentState == ONLINE && isConnected) {
+                ImGui::Separator();
+                ImGui::Text("=== NETWORK ===");
+                ImGui::Text("Sending RotationY: %.2f", myCharacter->debugCurrentYaw);
+                ImGui::Text("Player ID: %d", myPlayerId);
+            }
+
+            if (!remotePlayers.empty()) {
+                ImGui::Separator();
+                ImGui::Text("=== REMOTE PLAYERS ===");
+                for (auto& [id, remoteChar] : remotePlayers) {
+                    ImGui::Text("Player %d:", id);
+                    glm::vec3 remotePos = remoteChar->getPosition();
+                    ImGui::Text("  Pos: (%.2f, %.2f, %.2f)", remotePos.x, remotePos.y, remotePos.z);
+                    ImGui::Text("  Yaw: %.2f", remoteChar->debugCurrentYaw);
+                    ImGui::Text("  Target: %.2f", remoteChar->debugTargetYaw);
+                }
+            }
+        }
+    }
+    ImGui::End();
+}
+
+void renderAuthMenu(float uiScale) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float panelWidth = std::min(display.x - UiScale::Px(40.0f, uiScale), UiScale::Px(520.0f, uiScale));
+    const float panelHeight = UiScale::Px(360.0f, uiScale);
+    ImGui::SetNextWindowPos(ImVec2((display.x - panelWidth) * 0.5f, (display.y - panelHeight) * 0.5f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelWidth, panelHeight), ImGuiCond_Always);
+
+    if (ImGui::Begin("PlayerAuth", nullptr, overlayFlags())) {
+        drawLabel("RBLX CLONE PLAYER");
+        ImGui::TextUnformatted("Sign in through the website");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + panelWidth - UiScale::Px(48.0f, uiScale));
+        ImGui::TextWrapped("Sign in to continue with your account.");
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+
+        if (std::strlen(authToken) > 0) {
+            ImGui::Text("Signed in as %s", myUsername);
+            if (modernButton("Continue", ImVec2(-1, UiScale::Px(46.0f, uiScale)), ImVec4(0.10f, 0.50f, 0.95f, 1.0f))) {
+                currentState = MENU_PLAY_CHOICE;
+            }
+        }
+
+        if (modernButton(waitingForWebLogin ? "Waiting for login" : "Login with website", ImVec2(-1, UiScale::Px(50.0f, uiScale)), ImVec4(0.10f, 0.50f, 0.95f, 1.0f))) {
+            std::string loginUrl;
+            std::string error;
+            if (startAuthCallback(loginUrl, error)) {
+                Auth::openBrowser(loginUrl);
+                showLoginError = false;
+            } else {
+                showLoginError = true;
+                copyToBuffer(loginErrorMsg, sizeof(loginErrorMsg), error);
+            }
+        }
+
+        if (modernButton("Create account", ImVec2(-1, UiScale::Px(42.0f, uiScale)), ImVec4(0.16f, 0.18f, 0.23f, 1.0f))) {
+            Auth::openBrowser(automaticWebServerUrl() + "/signup");
+        }
+
+        if (modernButton("Play as guest", ImVec2(-1, UiScale::Px(42.0f, uiScale)), ImVec4(0.16f, 0.18f, 0.23f, 1.0f))) {
+            authToken[0] = '\0';
+            copyToBuffer(myUsername, sizeof(myUsername), "Guest");
+            currentState = MENU_PLAY_CHOICE;
+            showLoginError = false;
+        }
+
+        if (showLoginError) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.36f, 0.36f, 1.0f));
+            ImGui::TextWrapped("%s", loginErrorMsg);
+            ImGui::PopStyleColor();
+        }
+    }
+    ImGui::End();
+}
+
+void renderPlayMenu(GLFWwindow* nativeWindow, std::deque<Part>& parts, PhysicsWorld& physicsWorld, float uiScale) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float panelWidth = std::min(display.x - UiScale::Px(40.0f, uiScale), UiScale::Px(620.0f, uiScale));
+    const float panelHeight = UiScale::Px(330.0f, uiScale);
+    ImGui::SetNextWindowPos(ImVec2((display.x - panelWidth) * 0.5f, (display.y - panelHeight) * 0.5f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelWidth, panelHeight), ImGuiCond_Always);
+
+    if (ImGui::Begin("PlayMenu", nullptr, overlayFlags())) {
+        drawLabel(std::strlen(authToken) > 0 ? "SIGNED IN" : "GUEST SESSION");
+        ImGui::Text("Welcome, %s", myUsername);
+        ImGui::TextWrapped("Choose how you want to play.");
+        ImGui::Spacing();
+
+        if (modernButton("Play online", ImVec2(-1, UiScale::Px(52.0f, uiScale)), ImVec4(0.10f, 0.50f, 0.95f, 1.0f))) {
+            std::string error;
+            if (!connectToServer(error)) {
+                showLoginError = true;
+                copyToBuffer(loginErrorMsg, sizeof(loginErrorMsg), error);
+            } else {
+                showLoginError = false;
+            }
+        }
+
+        if (modernButton("Play offline", ImVec2(-1, UiScale::Px(48.0f, uiScale)), ImVec4(0.12f, 0.62f, 0.42f, 1.0f))) {
+            std::string path = openFileDialog(nativeWindow);
+            if (!path.empty()) {
+                WorldLoader::loadWorld(path, parts, physicsWorld);
+                if (myCharacter) delete myCharacter;
+                glm::vec3 spawnPos(0, 10, 0);
+                for (const auto& p : parts) {
+                    if (p.isSpawn) spawnPos = p.position + glm::vec3(0, 2, 0);
+                }
+                myCharacter = new Character(spawnPos, &physicsWorld, &parts,
+                    currentAvatar.headColor, currentAvatar.torsoColor,
+                    currentAvatar.leftArmColor, currentAvatar.rightArmColor,
+                    currentAvatar.leftLegColor, currentAvatar.rightLegColor);
+                if (myCharacter) {
+                    myCharacter->setFaceTexture(textureForFace(currentAvatar.faceId));
+                }
+                currentState = OFFLINE;
+                lastFrame = static_cast<float>(glfwGetTime());
+                addChatLine("System", "Offline world loaded.", true);
+                showLoginError = false;
+            }
+        }
+
+        if (modernButton("Switch account", ImVec2(-1, UiScale::Px(42.0f, uiScale)), ImVec4(0.16f, 0.18f, 0.23f, 1.0f))) {
+            currentState = MENU_AUTH_CHOICE;
+            showLoginError = false;
+        }
+
+        if (showLoginError) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.36f, 0.36f, 1.0f));
+            ImGui::TextWrapped("%s", loginErrorMsg);
+            ImGui::PopStyleColor();
+        }
+    }
+    ImGui::End();
+}
+
+void renderTopBar(std::deque<Part>& parts, PhysicsWorld& physicsWorld, float uiScale) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float width = std::min(UiScale::Px(420.0f, uiScale), display.x - UiScale::Px(32.0f, uiScale));
+    ImGui::SetNextWindowPos(ImVec2((display.x - width) * 0.5f, UiScale::Px(14.0f, uiScale)), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, UiScale::Px(58.0f, uiScale)), ImGuiCond_Always);
+    if (ImGui::Begin("TopBarHud", nullptr, overlayFlags())) {
+        ImGui::Text("%s", currentState == ONLINE ? "Online" : "Offline");
+        ImGui::SameLine();
+        if (modernButton("Leave game", ImVec2(UiScale::Px(130.0f, uiScale), UiScale::Px(34.0f, uiScale)), ImVec4(0.85f, 0.18f, 0.18f, 1.0f))) {
+            leaveCurrentGame(parts, physicsWorld);
+        }
+        ImGui::SameLine();
+        if (modernButton(showDebugGui ? "Hide debug" : "Debug", ImVec2(UiScale::Px(100.0f, uiScale), UiScale::Px(34.0f, uiScale)), ImVec4(0.16f, 0.18f, 0.23f, 1.0f))) {
+            showDebugGui = !showDebugGui;
+        }
+    }
+    ImGui::End();
+}
+
+void renderPlayerList(float uiScale) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float margin = UiScale::Px(18.0f, uiScale);
+    const float width = std::clamp(display.x * 0.24f, UiScale::Px(230.0f, uiScale), UiScale::Px(340.0f, uiScale));
+    const float height = std::clamp(UiScale::Px(92.0f + playerList.size() * 30.0f, uiScale), UiScale::Px(128.0f, uiScale), display.y * 0.46f);
+
+    ImGui::SetNextWindowPos(ImVec2(display.x - width - margin, margin), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    if (ImGui::Begin("PlayerListHud", nullptr, overlayFlags())) {
+        drawLabel("PLAYERS");
+        int count = 1;
+        for (const auto& player : playerList) {
+            if (player.playerId != myPlayerId) ++count;
+        }
+        ImGui::Text("%d online", count);
+        ImGui::Separator();
+        ImGui::Text("%s  (You)", myUsername);
+        for (const auto& player : playerList) {
+            if (player.playerId == myPlayerId) continue;
+            const std::string username = PacketProtocol::fixedString(player.username, sizeof(player.username));
+            ImGui::Text("%s", username.empty() ? "Player" : username.c_str());
+        }
+    }
+    ImGui::End();
+}
+
+void renderChat(float uiScale) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float margin = UiScale::Px(18.0f, uiScale);
+    const float width = std::clamp(display.x * 0.34f, UiScale::Px(300.0f, uiScale), UiScale::Px(460.0f, uiScale));
+    const float height = std::clamp(display.y * 0.30f, UiScale::Px(210.0f, uiScale), UiScale::Px(320.0f, uiScale));
+
+    ImGui::SetNextWindowPos(ImVec2(margin, margin), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    if (ImGui::Begin("ChatHud", nullptr, overlayFlags())) {
+        drawLabel("CHAT");
+        ImGui::BeginChild("ChatMessages", ImVec2(0, -UiScale::Px(44.0f, uiScale)), false);
+        for (const auto& line : chatLines) {
+            if (line.system) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.72f, 0.90f, 1.0f));
+                ImGui::TextWrapped("%s", line.message.c_str());
+                ImGui::PopStyleColor();
+            } else {
+                ImGui::TextWrapped("%s: %s", line.username.c_str(), line.message.c_str());
+            }
+        }
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+
+        ImGui::SetNextItemWidth(-UiScale::Px(72.0f, uiScale));
+        bool enterPressed = ImGui::InputText("##chatInput", chatInput, sizeof(chatInput), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if (modernButton("Send", ImVec2(UiScale::Px(62.0f, uiScale), 0), ImVec4(0.10f, 0.50f, 0.95f, 1.0f)) || enterPressed) {
+            sendChatMessage();
+        }
+    }
+    ImGui::End();
+}
+
+void renderBottomHud(float uiScale) {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float width = std::min(display.x - UiScale::Px(32.0f, uiScale), UiScale::Px(560.0f, uiScale));
+    const float height = UiScale::Px(138.0f, uiScale);
+    ImGui::SetNextWindowPos(ImVec2((display.x - width) * 0.5f, display.y - height - UiScale::Px(18.0f, uiScale)), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    if (ImGui::Begin("BottomHud", nullptr, overlayFlags())) {
+        const float slotSize = std::min(UiScale::Px(62.0f, uiScale), (width - UiScale::Px(72.0f, uiScale)) / 5.0f);
+        const float startX = (width - (slotSize * 5.0f + UiScale::Px(8.0f, uiScale) * 4.0f)) * 0.5f;
+        ImGui::SetCursorPosX(startX);
+        for (int i = 0; i < 5; ++i) {
+            ImGui::PushID(i);
+            modernButton(std::to_string(i + 1).c_str(), ImVec2(slotSize, slotSize), ImVec4(0.095f, 0.105f, 0.135f, 1.0f));
+            ImGui::PopID();
+            if (i < 4) ImGui::SameLine();
+        }
+
+        ImGui::Spacing();
+        float health = myCharacter ? myCharacter->health : 100.0f;
+        float maxHealth = myCharacter ? myCharacter->maxHealth : 100.0f;
+        const float fraction = maxHealth > 0.0f ? std::clamp(health / maxHealth, 0.0f, 1.0f) : 0.0f;
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, fraction > 0.35f ? ImVec4(0.10f, 0.82f, 0.46f, 1.0f) : ImVec4(0.95f, 0.28f, 0.22f, 1.0f));
+        char label[64];
+        std::snprintf(label, sizeof(label), "Health %.0f / %.0f", health, maxHealth);
+        ImGui::ProgressBar(fraction, ImVec2(-1, UiScale::Px(24.0f, uiScale)), label);
+        ImGui::PopStyleColor();
+    }
+    ImGui::End();
+}
+
+void renderGameHud(std::deque<Part>& parts, PhysicsWorld& physicsWorld, float uiScale) {
+    if ((currentState != ONLINE && currentState != OFFLINE) || !myCharacter) return;
+    renderChat(uiScale);
+    if (currentState == ONLINE && isConnected) {
+        renderPlayerList(uiScale);
+    }
+    renderTopBar(parts, physicsWorld, uiScale);
+    renderBottomHud(uiScale);
+}
 
 // Windows File Dialog
 std::string openFileDialog(GLFWwindow* window) {
@@ -450,6 +1169,7 @@ int main(int argc, char** argv) {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         ImGui::StyleColorsDark();
+        applyModernPlayerStyle();
         const float uiScale = UiScale::Apply(window.getNativeWindow());
         ImGui_ImplGlfw_InitForOpenGL(window.getNativeWindow(), true);
         ImGui_ImplOpenGL3_Init("#version 330");
@@ -479,28 +1199,44 @@ int main(int argc, char** argv) {
         std::cout << "Network Initialized." << std::endl;
         
         // Load saved token on startup
+        std::string savedToken;
         std::ifstream tokenFile("auth_token.txt");
         if (tokenFile.is_open()) {
-            std::string token;
-            std::getline(tokenFile, token);
-            if (!token.empty()) {
-                strncpy(authToken, token.c_str(), 255);
-                authToken[255] = '\0';
-                // If token exists, skip to play choice menu
-                currentState = MENU_PLAY_CHOICE;
-            }
+            std::getline(tokenFile, savedToken);
             tokenFile.close();
         }
 
         parseClientArguments(argc, argv);
+        const bool hasLaunchToken = std::strlen(authToken) > 0;
         
         // Load saved avatar (will be fetched from server when logged in)
         currentAvatar.loadFromFile("avatar.txt");
+        if (hasLaunchToken) {
+            std::string authError;
+            if (applyAuthSession(authToken, "Player", automaticWebServerUrl(), false, authError)) {
+                currentState = MENU_PLAY_CHOICE;
+            } else {
+                addChatLine("System", authError, true);
+            }
+        } else if (!savedToken.empty()) {
+            std::string authError;
+            if (applyAuthSession(savedToken, "Player", automaticWebServerUrl(), false, authError)) {
+                currentState = MENU_PLAY_CHOICE;
+            } else {
+                authToken[0] = '\0';
+                currentState = MENU_AUTH_CHOICE;
+                addChatLine("System", authError, true);
+            }
+        }
         
         loadFaceTextures();
 
         if (autoConnectOnStart) {
-            connectToConfiguredServer();
+            std::string connectError;
+            if (!connectToServer(connectError)) {
+                showLoginError = true;
+                copyToBuffer(loginErrorMsg, sizeof(loginErrorMsg), connectError);
+            }
         }
 
         glEnable(GL_DEPTH_TEST);
@@ -531,286 +1267,22 @@ int main(int argc, char** argv) {
             if (frameCount < 5) std::cout << "Frame " << frameCount << " ImGui NewFrame" << std::endl;
 
             // 3. Logic / UI
-            // Debug Info Window
-            ImGui::Begin("Debug Info");
-            ImGui::Text("FPS: %.1f", io.Framerate);
-            ImGui::Separator();
-            
-            // Camera Info
-            if (currentState == ONLINE || currentState == OFFLINE) {
-                ImGui::Text("=== CAMERA ===");
-                ImGui::Text("Position: (%.2f, %.2f, %.2f)", camera.Position.x, camera.Position.y, camera.Position.z);
-                ImGui::Text("Yaw: %.2f", camera.Yaw);
-                ImGui::Text("Pitch: %.2f", camera.Pitch);
-                ImGui::Separator();
-                
-                // Player Info
-                if (myCharacter) {
-                    ImGui::Text("=== PLAYER (Local) ===");
-                    glm::vec3 pos = myCharacter->getPosition();
-                    ImGui::Text("Position: (%.2f, %.2f, %.2f)", pos.x, pos.y, pos.z);
-                    ImGui::Text("Internal Yaw: %.2f", myCharacter->debugCurrentYaw);
-                    ImGui::Text("Target Yaw: %.2f", myCharacter->debugTargetYaw);
-                    ImGui::Text("Move Dir: (%.2f, %.2f, %.2f)", 
-                        myCharacter->debugMoveDir.x, 
-                        myCharacter->debugMoveDir.y, 
-                        myCharacter->debugMoveDir.z);
-                    
-                    if (currentState == ONLINE && isConnected) {
-                        ImGui::Separator();
-                        ImGui::Text("=== NETWORK ===");
-                        ImGui::Text("Sending RotationY: %.2f", myCharacter->debugCurrentYaw);
-                        ImGui::Text("Player ID: %d", myPlayerId);
-                    }
-                    ImGui::Separator();
-                    
-                    // Remote Players Info
-                    if (!remotePlayers.empty()) {
-                        ImGui::Text("=== REMOTE PLAYERS ===");
-                        for (auto& [id, remoteChar] : remotePlayers) {
-                            ImGui::Text("Player %d:", id);
-                            glm::vec3 remotePos = remoteChar->getPosition();
-                            ImGui::Text("  Pos: (%.2f, %.2f, %.2f)", remotePos.x, remotePos.y, remotePos.z);
-                            ImGui::Text("  Yaw: %.2f", remoteChar->debugCurrentYaw);
-                            ImGui::Text("  Target: %.2f", remoteChar->debugTargetYaw);
-                        }
-                    }
-                }
-            }
-            
-            ImGui::End();
+            pollAuthCallback();
 
-            // First Menu: Choose Login/Register/Guest
-            if (currentState == MENU_AUTH_CHOICE) {
-                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 300.0f, uiScale), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 300.0f, uiScale), ImGuiCond_Always);
-                if (ImGui::Begin("Welcome", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
-                    ImGui::Text("Welcome to RBLX Game Engine!");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-                    
-                    if (ImGui::Button("Login", UiScale::Size(360.0f, 50.0f, uiScale))) {
-                        currentState = MENU; // Show login form
-                    }
-                    
-                    ImGui::Spacing();
-                    
-                    if (ImGui::Button("Sign Up", UiScale::Size(360.0f, 50.0f, uiScale))) {
-                        std::string url = std::string(webServerUrl) + "/signup";
-                        Auth::openBrowser(url);
-                    }
-                    
-                    ImGui::Spacing();
-                    
-                    if (ImGui::Button("Play as Guest", UiScale::Size(360.0f, 50.0f, uiScale))) {
-                        // Skip to play choice menu
-                        currentState = MENU_PLAY_CHOICE;
-                    }
-                }
-                ImGui::End();
+            static bool wasDebugToggleDown = false;
+            const bool debugToggleDown = glfwGetKey(window.getNativeWindow(), GLFW_KEY_F3) == GLFW_PRESS;
+            if (debugToggleDown && !wasDebugToggleDown) {
+                showDebugGui = !showDebugGui;
             }
-            
-            // Login Form
-            if (currentState == MENU) {
-                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 400.0f, uiScale), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 400.0f, uiScale), ImGuiCond_Always);
-                if (ImGui::Begin("Login", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
-                    ImGui::Text("Login to Your Account");
-                    ImGui::Separator();
-                    
-                    ImGui::InputText("Username", loginUsername, 32);
-                    ImGui::InputText("Password", loginPassword, 64, ImGuiInputTextFlags_Password);
-                    ImGui::InputText("Web Server URL", webServerUrl, 128);
-                    
-                    if (showLoginError) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-                        ImGui::Text("%s", loginErrorMsg);
-                        ImGui::PopStyleColor();
-                    }
-                    
-                    if (ImGui::Button("Login", UiScale::Size(180.0f, 40.0f, uiScale))) {
-                        showLoginError = false;
-                        std::string response = Auth::login(std::string(loginUsername), std::string(loginPassword), std::string(webServerUrl));
-                        if (!response.empty() && response.find("\"success\":true") != std::string::npos) {
-                            // Parse token from JSON (simple parsing)
-                            size_t tokenPos = response.find("\"token\":\"");
-                            if (tokenPos != std::string::npos) {
-                                tokenPos += 9; // Skip "token":"
-                                size_t tokenEnd = response.find("\"", tokenPos);
-                                if (tokenEnd != std::string::npos) {
-                                    std::string token = response.substr(tokenPos, tokenEnd - tokenPos);
-                                    strncpy(authToken, token.c_str(), 255);
-                                    authToken[255] = '\0';
-                                    strncpy(myUsername, loginUsername, 31);
-                                    myUsername[31] = '\0';
-                                    
-                                    // Save token to file
-                                    std::ofstream tokenFile("auth_token.txt");
-                                    if (tokenFile.is_open()) {
-                                        tokenFile << token;
-                                        tokenFile.close();
-                                    }
-                                    
-                                    // Fetch avatar from server
-                                    std::string avatarResponse = Auth::getAvatar(token, std::string(webServerUrl));
-                                    if (!avatarResponse.empty() && avatarResponse.find("\"success\":true") != std::string::npos) {
-                                        // Parse avatar colors from JSON (simple parsing)
-                                        // Format: "headColor":[r,g,b], "torsoColor":[r,g,b], etc.
-                                        auto parseColorArray = [&avatarResponse](const std::string& name, glm::vec3& color) {
-                                            size_t pos = avatarResponse.find("\"" + name + "\":[");
-                                            if (pos != std::string::npos) {
-                                                pos = avatarResponse.find("[", pos);
-                                                if (pos != std::string::npos) {
-                                                    pos++;
-                                                    size_t end = avatarResponse.find("]", pos);
-                                                    if (end != std::string::npos) {
-                                                        std::string colorStr = avatarResponse.substr(pos, end - pos);
-                                                        // Parse "r, g, b"
-                                                        size_t comma1 = colorStr.find(",");
-                                                        size_t comma2 = colorStr.find(",", comma1 + 1);
-                                                        if (comma1 != std::string::npos && comma2 != std::string::npos) {
-                                                            color.r = std::stof(colorStr.substr(0, comma1));
-                                                            color.g = std::stof(colorStr.substr(comma1 + 1, comma2 - comma1 - 1));
-                                                            color.b = std::stof(colorStr.substr(comma2 + 1));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        };
-                                        
-                                        parseColorArray("headColor", currentAvatar.headColor);
-                                        parseColorArray("torsoColor", currentAvatar.torsoColor);
-                                        parseColorArray("leftArmColor", currentAvatar.leftArmColor);
-                                        parseColorArray("rightArmColor", currentAvatar.rightArmColor);
-                                        parseColorArray("leftLegColor", currentAvatar.leftLegColor);
-                                        parseColorArray("rightLegColor", currentAvatar.rightLegColor);
-                                        currentAvatar.faceId = normalizeFaceId(jsonStringField(avatarResponse, "faceId"));
-                                        
-                                        // Save to local file as backup
-                                        currentAvatar.saveToFile("avatar.txt");
-                                    }
-                                    
-                                    // Move to play choice menu
-                                    currentState = MENU_PLAY_CHOICE;
-                                }
-                            }
-                        } else {
-                            showLoginError = true;
-                            strncpy(loginErrorMsg, "Login failed. Check username/password.", 255);
-                        }
-                    }
-                    
-                    ImGui::SameLine();
-                    if (ImGui::Button("Back", UiScale::Size(180.0f, 40.0f, uiScale))) {
-                        currentState = MENU_AUTH_CHOICE;
-                    }
-                }
-                ImGui::End();
+            wasDebugToggleDown = debugToggleDown;
+
+            renderDebugWindow(io);
+            if (currentState == MENU_AUTH_CHOICE || currentState == MENU) {
+                renderAuthMenu(uiScale);
+            } else if (currentState == MENU_PLAY_CHOICE) {
+                renderPlayMenu(window.getNativeWindow(), parts, physicsWorld, uiScale);
             }
-            
-            // Second Menu: Choose Online/Offline
-            if (currentState == MENU_PLAY_CHOICE) {
-                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 220.0f, uiScale), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 220.0f, uiScale), ImGuiCond_Always);
-                if (ImGui::Begin("Play", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
-                    ImGui::Text("How would you like to play?");
-                    ImGui::Separator();
-                    ImGui::Spacing();
-                    
-                    if (ImGui::Button("Play Online", UiScale::Size(360.0f, 50.0f, uiScale))) {
-                        // Show server IP input and connect
-                        showConnectionUI = true;
-                    }
-                    
-                    ImGui::Spacing();
-                    
-                    if (ImGui::Button("Play Offline", UiScale::Size(360.0f, 50.0f, uiScale))) {
-                        std::string path = openFileDialog(window.getNativeWindow());
-                        if (!path.empty()) {
-                            WorldLoader::loadWorld(path, parts, physicsWorld);
-                            if (myCharacter) delete myCharacter;
-                            glm::vec3 spawnPos(0, 10, 0);
-                            for(const auto& p : parts) { if(p.isSpawn) spawnPos = p.position + glm::vec3(0, 2, 0); }
-                            myCharacter = new Character(spawnPos, &physicsWorld, &parts,
-                                currentAvatar.headColor, currentAvatar.torsoColor,
-                                currentAvatar.leftArmColor, currentAvatar.rightArmColor,
-                                currentAvatar.leftLegColor, currentAvatar.rightLegColor);
-                            if (myCharacter) {
-                                myCharacter->setFaceTexture(textureForFace(currentAvatar.faceId));
-                            }
-                            currentState = OFFLINE;
-                            lastFrame = static_cast<float>(glfwGetTime()); 
-                        }
-                    }
-                    
-                    ImGui::Spacing();
-                    if (ImGui::Button("Back", UiScale::Size(360.0f, 34.0f, uiScale))) {
-                        currentState = MENU_AUTH_CHOICE;
-                    }
-                }
-                ImGui::End();
-            }
-            
-            // Connection UI (shown when "Play Online" is clicked from MENU_PLAY_CHOICE)
-            if (showConnectionUI) {
-                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 260.0f, uiScale), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 260.0f, uiScale), ImGuiCond_Always);
-                const char* title = (strlen(authToken) > 0) ? "Connect to Server" : "Connect to Server (Guest)";
-                if (ImGui::Begin(title, NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
-                    ImGui::Text("Server IP:");
-                    ImGui::InputText("##ip", serverIP, 32);
-                    ImGui::Text("Port:");
-                    ImGui::InputInt("##port", &serverPort);
-                    serverPort = std::max(1, std::min(65535, serverPort));
-                    
-                    const char* connectText = (strlen(authToken) > 0) ? "Connect" : "Connect as Guest";
-                    if (ImGui::Button(connectText, UiScale::Size(180.0f, 40.0f, uiScale))) {
-                        connectToConfiguredServer();
-                    }
-                    
-                    ImGui::SameLine();
-                    if (ImGui::Button("Back", UiScale::Size(180.0f, 40.0f, uiScale))) {
-                        showConnectionUI = false;
-                        currentState = MENU_PLAY_CHOICE;
-                    }
-                    
-                    if (showLoginError) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-                        ImGui::Text("%s", loginErrorMsg);
-                        ImGui::PopStyleColor();
-                    }
-                }
-                ImGui::End();
-            }
-            
-            // Player List Window (when online) - Always show when online, auto-scale
-            if (currentState == ONLINE && isConnected) {
-                ImGui::SetNextWindowPos(ImVec2(UiScale::Px(10.0f, uiScale), UiScale::Px(10.0f, uiScale)), ImGuiCond_FirstUseEver);
-                // Auto-scale window size based on number of players
-                int playerCount = (int)playerList.size() + 1; // +1 for local player
-                float windowHeight = UiScale::Px(60.0f + (playerCount * 25.0f), uiScale); // Base height + per player
-                if (windowHeight > UiScale::Px(500.0f, uiScale)) windowHeight = UiScale::Px(500.0f, uiScale); // Max height
-                ImGui::SetNextWindowSize(ImVec2(UiScale::Px(250.0f, uiScale), windowHeight), ImGuiCond_Always);
-                if (ImGui::Begin("Players", NULL)) {
-                    ImGui::Text("Players Online: %d", playerCount);
-                    ImGui::Separator();
-                    
-                    // Show local player first
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-                    ImGui::Text("> %s (You)", myUsername);
-                    ImGui::PopStyleColor();
-                    
-                    // Show other players
-                    if (playerList.empty()) {
-                        // Already showing local player, so no message needed
-                    } else {
-                        for (const auto& player : playerList) {
-                            ImGui::Text("%s (ID: %d)", player.username, player.playerId);
-                        }
-                    }
-                }
-                ImGui::End();
-            }
+            renderGameHud(parts, physicsWorld, uiScale);
 
             // ... Network & Physics Logic (Keep logic running)
             if (isConnected && clientSocket != INVALID_SOCKET) {
@@ -1078,6 +1550,18 @@ int main(int argc, char** argv) {
                                     std::cerr << "ERROR: Exception updating remote character state for player " << pkt->playerId << std::endl;
                                 }
                             }
+                        }
+                        else if (header->type == PacketType::CHAT) {
+                            if (header->size < sizeof(PacketChat)) {
+                                std::cerr << "ERROR: Invalid CHAT packet size" << std::endl;
+                                offset += packetSize;
+                                continue;
+                            }
+
+                            PacketChat* pkt = (PacketChat*)(packetBuffer + offset + sizeof(PacketHeader));
+                            const std::string username = PacketProtocol::fixedString(pkt->username, sizeof(pkt->username));
+                            const std::string message = PacketProtocol::fixedString(pkt->message, sizeof(pkt->message));
+                            addChatLine(username.empty() ? "Player" : username, message);
                         }
                         else if (header->type == PacketType::PLAYER_LIST) {
                             // Player list from server
@@ -1351,7 +1835,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if ((isConnected || currentState == OFFLINE) && myCharacter) {
+            if ((isConnected || currentState == OFFLINE) && myCharacter && !io.WantCaptureKeyboard) {
                  try {
                      bool fwd = glfwGetKey(window.getNativeWindow(), GLFW_KEY_W) == GLFW_PRESS;
                      bool bwd = glfwGetKey(window.getNativeWindow(), GLFW_KEY_S) == GLFW_PRESS;

@@ -318,6 +318,13 @@ function initLogin() {
 
     const status = document.querySelector('[data-status]');
     const submit = form.querySelector('button[type="submit"]');
+    const params = new URLSearchParams(window.location.search);
+    const playerRedirect = safePlayerRedirect(params.get('redirect'));
+
+    if (params.get('client') === 'player') {
+        const lede = document.querySelector('[data-login-lede]');
+        if (lede) lede.textContent = 'Sign in here, then this page will return your session to the open player.';
+    }
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -331,17 +338,40 @@ function initLogin() {
             if (!response.ok) throw new Error(data.error || 'Login failed.');
 
             saveSession(data);
-            setStatus(status, 'Signed in. Opening dashboard.', 'success');
-            const params = new URLSearchParams(window.location.search);
-            const next = params.get('next');
-            const destination = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
-            window.setTimeout(() => { window.location.href = destination; }, 350);
+            if (playerRedirect) {
+                playerRedirect.searchParams.set('token', data.token);
+                playerRedirect.searchParams.set('username', data.username);
+                playerRedirect.searchParams.set('userId', data.userId);
+                setStatus(status, 'Signed in. Returning to player.', 'success');
+                window.setTimeout(() => { window.location.href = playerRedirect.toString(); }, 350);
+            } else {
+                setStatus(status, 'Signed in. Opening dashboard.', 'success');
+                const next = params.get('next');
+                const destination = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
+                window.setTimeout(() => { window.location.href = destination; }, 350);
+            }
         } catch (error) {
             setStatus(status, error.message || 'Network error.', 'error');
             submit.disabled = false;
             submit.textContent = 'Sign in';
         }
     });
+}
+
+function safePlayerRedirect(value) {
+    if (!value) return null;
+
+    try {
+        const url = new URL(value);
+        const port = Number.parseInt(url.port, 10);
+        const isLoopback = url.protocol === 'http:' &&
+            (url.hostname === '127.0.0.1' || url.hostname === 'localhost') &&
+            url.pathname === '/auth';
+        const isPlayerPort = Number.isInteger(port) && port >= 39170 && port < 39190;
+        return isLoopback && isPlayerPort ? url : null;
+    } catch {
+        return null;
+    }
 }
 
 function initSignup() {
