@@ -6,6 +6,7 @@
 #include "Skybox.h"
 #include "PhysicsWorld.h"
 #include "ShadowMap.h"
+#include "UiScale.h"
 
 #include <fstream>
 #include <sstream>
@@ -175,6 +176,7 @@ int main() {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     ImGui::StyleColorsDark();
+    const float uiScale = UiScale::Apply(window.getNativeWindow());
     ImGui_ImplGlfw_InitForOpenGL(window.getNativeWindow(), true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
@@ -265,7 +267,7 @@ int main() {
         ImGui::NewFrame();
         
         // Overlay UI
-        ImGui::SetNextWindowPos(ImVec2(10, 10));
+        ImGui::SetNextWindowPos(ImVec2(UiScale::Px(10.0f, uiScale), UiScale::Px(10.0f, uiScale)));
         if (ImGui::Begin("Player Controls", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
             if (ImGui::Button("Load (Test)")) {
                 std::string newFile = openFileDialog(window.getNativeWindow());
@@ -304,7 +306,7 @@ int main() {
             ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
             window_flags |= ImGuiWindowFlags_NoMove;
             
-            float PAD = 10.0f;
+            float PAD = UiScale::Px(10.0f, uiScale);
             const ImGuiViewport* viewport = ImGui::GetMainViewport();
             ImVec2 work_pos = viewport->WorkPos; 
             ImVec2 work_size = viewport->WorkSize;
@@ -327,7 +329,7 @@ int main() {
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
                 char buf[32];
                 sprintf(buf, "%.0f / %.0f", health, maxHealth);
-                ImGui::ProgressBar(health / maxHealth, ImVec2(200.0f, 20.0f), buf);
+                ImGui::ProgressBar(health / maxHealth, UiScale::Size(200.0f, 20.0f, uiScale), buf);
                 ImGui::PopStyleColor();
             }
             ImGui::End();
@@ -340,7 +342,7 @@ int main() {
         
         // Player List (Leaderboard)
         {
-            float PAD = 10.0f;
+            float PAD = UiScale::Px(10.0f, uiScale);
             const ImGuiViewport* viewport = ImGui::GetMainViewport();
             ImVec2 work_pos = viewport->WorkPos; 
             ImVec2 work_size = viewport->WorkSize;

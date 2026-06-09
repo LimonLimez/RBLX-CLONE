@@ -58,6 +58,8 @@ web/.env.*
 # Logs
 *.log
 *.tlog
+client_log.txt
+client_error_log.txt
 
 # Temporary files
 *.tmp
@@ -77,6 +79,7 @@ GameRelease/Server/*.exe
 
 # Auth tokens (sensitive)
 auth_token.txt
+avatar.txt
 *.token
 
 # ImGui config

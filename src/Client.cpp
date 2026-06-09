@@ -13,6 +13,7 @@
 #include "WorldLoader.h"
 #include "Auth.h"
 #include "Avatar.h"
+#include "UiScale.h"
 #include <glm/gtx/euler_angles.hpp>
 #include <fstream>
 #include <sstream>
@@ -289,6 +290,7 @@ int main() {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         ImGui::StyleColorsDark();
+        const float uiScale = UiScale::Apply(window.getNativeWindow());
         ImGui_ImplGlfw_InitForOpenGL(window.getNativeWindow(), true);
         ImGui_ImplOpenGL3_Init("#version 330");
         std::cout << "ImGui Initialized." << std::endl;
@@ -419,27 +421,27 @@ int main() {
 
             // First Menu: Choose Login/Register/Guest
             if (currentState == MENU_AUTH_CHOICE) {
-                ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH/2 - 200, SCR_HEIGHT/2 - 150), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 300.0f, uiScale), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 300.0f, uiScale), ImGuiCond_Always);
                 if (ImGui::Begin("Welcome", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     ImGui::Text("Welcome to RBLX Game Engine!");
                     ImGui::Separator();
                     ImGui::Spacing();
                     
-                    if (ImGui::Button("Login", ImVec2(360, 50))) {
+                    if (ImGui::Button("Login", UiScale::Size(360.0f, 50.0f, uiScale))) {
                         currentState = MENU; // Show login form
                     }
                     
                     ImGui::Spacing();
                     
-                    if (ImGui::Button("Sign Up", ImVec2(360, 50))) {
+                    if (ImGui::Button("Sign Up", UiScale::Size(360.0f, 50.0f, uiScale))) {
                         std::string url = std::string(webServerUrl) + "/signup";
                         Auth::openBrowser(url);
                     }
                     
                     ImGui::Spacing();
                     
-                    if (ImGui::Button("Play as Guest", ImVec2(360, 50))) {
+                    if (ImGui::Button("Play as Guest", UiScale::Size(360.0f, 50.0f, uiScale))) {
                         // Skip to play choice menu
                         currentState = MENU_PLAY_CHOICE;
                     }
@@ -449,8 +451,8 @@ int main() {
             
             // Login Form
             if (currentState == MENU) {
-                ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH/2 - 200, SCR_HEIGHT/2 - 200), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(400, 400), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 400.0f, uiScale), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 400.0f, uiScale), ImGuiCond_Always);
                 if (ImGui::Begin("Login", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     ImGui::Text("Login to Your Account");
                     ImGui::Separator();
@@ -465,7 +467,7 @@ int main() {
                         ImGui::PopStyleColor();
                     }
                     
-                    if (ImGui::Button("Login", ImVec2(180, 40))) {
+                    if (ImGui::Button("Login", UiScale::Size(180.0f, 40.0f, uiScale))) {
                         showLoginError = false;
                         std::string response = Auth::login(std::string(loginUsername), std::string(loginPassword), std::string(webServerUrl));
                         if (!response.empty() && response.find("\"success\":true") != std::string::npos) {
@@ -537,7 +539,7 @@ int main() {
                     }
                     
                     ImGui::SameLine();
-                    if (ImGui::Button("Back", ImVec2(180, 40))) {
+                    if (ImGui::Button("Back", UiScale::Size(180.0f, 40.0f, uiScale))) {
                         currentState = MENU_AUTH_CHOICE;
                     }
                 }
@@ -546,21 +548,21 @@ int main() {
             
             // Second Menu: Choose Online/Offline
             if (currentState == MENU_PLAY_CHOICE) {
-                ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH/2 - 200, SCR_HEIGHT/2 - 100), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 220.0f, uiScale), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 220.0f, uiScale), ImGuiCond_Always);
                 if (ImGui::Begin("Play", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     ImGui::Text("How would you like to play?");
                     ImGui::Separator();
                     ImGui::Spacing();
                     
-                    if (ImGui::Button("Play Online", ImVec2(360, 50))) {
+                    if (ImGui::Button("Play Online", UiScale::Size(360.0f, 50.0f, uiScale))) {
                         // Show server IP input and connect
                         showConnectionUI = true;
                     }
                     
                     ImGui::Spacing();
                     
-                    if (ImGui::Button("Play Offline", ImVec2(360, 50))) {
+                    if (ImGui::Button("Play Offline", UiScale::Size(360.0f, 50.0f, uiScale))) {
                         std::string path = openFileDialog(window.getNativeWindow());
                         if (!path.empty()) {
                             WorldLoader::loadWorld(path, parts, physicsWorld);
@@ -577,7 +579,7 @@ int main() {
                     }
                     
                     ImGui::Spacing();
-                    if (ImGui::Button("Back", ImVec2(360, 30))) {
+                    if (ImGui::Button("Back", UiScale::Size(360.0f, 34.0f, uiScale))) {
                         currentState = MENU_AUTH_CHOICE;
                     }
                 }
@@ -586,15 +588,15 @@ int main() {
             
             // Connection UI (shown when "Play Online" is clicked from MENU_PLAY_CHOICE)
             if (showConnectionUI) {
-                ImGui::SetNextWindowPos(ImVec2(SCR_WIDTH/2 - 200, SCR_HEIGHT/2 - 100), ImGuiCond_Always);
-                ImGui::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(UiScale::CenteredWindowPos(400.0f, 220.0f, uiScale), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(UiScale::Size(400.0f, 220.0f, uiScale), ImGuiCond_Always);
                 const char* title = (strlen(authToken) > 0) ? "Connect to Server" : "Connect to Server (Guest)";
                 if (ImGui::Begin(title, NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
                     ImGui::Text("Server IP:");
                     ImGui::InputText("##ip", serverIP, 32);
                     
                     const char* connectText = (strlen(authToken) > 0) ? "Connect" : "Connect as Guest";
-                    if (ImGui::Button(connectText, ImVec2(180, 40))) {
+                    if (ImGui::Button(connectText, UiScale::Size(180.0f, 40.0f, uiScale))) {
                         // Connect Logic
                         clientSocket = socket(AF_INET, SOCK_STREAM, 0);
                         sockaddr_in serverAddr;
@@ -638,7 +640,7 @@ int main() {
                     }
                     
                     ImGui::SameLine();
-                    if (ImGui::Button("Back", ImVec2(180, 40))) {
+                    if (ImGui::Button("Back", UiScale::Size(180.0f, 40.0f, uiScale))) {
                         showConnectionUI = false;
                         currentState = MENU_PLAY_CHOICE;
                     }
@@ -654,12 +656,12 @@ int main() {
             
             // Player List Window (when online) - Always show when online, auto-scale
             if (currentState == ONLINE && isConnected) {
-                ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos(ImVec2(UiScale::Px(10.0f, uiScale), UiScale::Px(10.0f, uiScale)), ImGuiCond_FirstUseEver);
                 // Auto-scale window size based on number of players
                 int playerCount = (int)playerList.size() + 1; // +1 for local player
-                float windowHeight = 60.0f + (playerCount * 25.0f); // Base height + per player
-                if (windowHeight > 500.0f) windowHeight = 500.0f; // Max height
-                ImGui::SetNextWindowSize(ImVec2(250, windowHeight), ImGuiCond_Always);
+                float windowHeight = UiScale::Px(60.0f + (playerCount * 25.0f), uiScale); // Base height + per player
+                if (windowHeight > UiScale::Px(500.0f, uiScale)) windowHeight = UiScale::Px(500.0f, uiScale); // Max height
+                ImGui::SetNextWindowSize(ImVec2(UiScale::Px(250.0f, uiScale), windowHeight), ImGuiCond_Always);
                 if (ImGui::Begin("Players", NULL)) {
                     ImGui::Text("Players Online: %d", playerCount);
                     ImGui::Separator();

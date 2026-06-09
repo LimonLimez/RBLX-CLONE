@@ -1,4 +1,5 @@
 #include "Editor.h"
+#include "UiScale.h"
 #include <iostream>
 #include "imgui_internal.h" // Needed for DockBuilder
 
@@ -19,6 +20,7 @@ void Editor::init() {
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
+    UiScale::Apply(window);
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window, true);

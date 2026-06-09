@@ -3,520 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Avatar Creator - RBLX Game Engine</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 40px;
-        }
-        
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #e0e0e0;
-        }
-        
-        h1 {
-            color: #333;
-            font-size: 2.5em;
-        }
-        
-        .button {
-            display: inline-block;
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            border-radius: 8px;
-            font-weight: bold;
-            transition: transform 0.2s, box-shadow 0.2s;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-            margin: 5px;
-        }
-        
-        .button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
-        }
-        
-        .button-secondary {
-            background: #f0f0f0;
-            color: #333;
-        }
-        
-        .button-secondary:hover {
-            background: #e0e0e0;
-        }
-        
-        .button-success {
-            background: #27ae60;
-        }
-        
-        .button-success:hover {
-            background: #229954;
-        }
-        
-        .avatar-creator {
-            display: flex;
-            gap: 30px;
-            margin-top: 20px;
-        }
-        
-        .character-preview {
-            flex: 1;
-            background: #f8f9fa;
-            border-radius: 12px;
-            padding: 30px;
-            text-align: center;
-            min-height: 500px;
-            position: relative;
-        }
-        
-        .character-canvas {
-            position: relative;
-            width: 300px;
-            height: 500px;
-            margin: 0 auto;
-            background: white;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-        
-        .body-part {
-            position: absolute;
-            border: 2px solid transparent;
-            transition: border-color 0.2s;
-            cursor: pointer;
-        }
-        
-        .body-part:hover {
-            border-color: #667eea;
-        }
-        
-        .body-part.selected {
-            border-color: #f39c12;
-            border-width: 3px;
-            box-shadow: 0 0 10px rgba(243, 156, 18, 0.5);
-        }
-        
-        .color-picker-panel {
-            flex: 1;
-            background: #f8f9fa;
-            border-radius: 12px;
-            padding: 30px;
-        }
-        
-        .color-picker-panel h2 {
-            color: #333;
-            margin-bottom: 20px;
-        }
-        
-        .part-selector {
-            margin-bottom: 20px;
-        }
-        
-        .part-button {
-            display: inline-block;
-            padding: 10px 20px;
-            margin: 5px;
-            background: #e0e0e0;
-            border: 2px solid transparent;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .part-button:hover {
-            background: #d0d0d0;
-        }
-        
-        .part-button.active {
-            background: #667eea;
-            color: white;
-            border-color: #764ba2;
-        }
-        
-        .color-input-group {
-            margin-top: 20px;
-        }
-        
-        .color-input-group label {
-            display: block;
-            margin-bottom: 10px;
-            color: #333;
-            font-weight: 500;
-        }
-        
-        .color-preview {
-            width: 100%;
-            height: 60px;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            border: 2px solid #ddd;
-        }
-        
-        .slider-group {
-            margin-bottom: 15px;
-        }
-        
-        .slider-group label {
-            display: block;
-            margin-bottom: 5px;
-            color: #666;
-        }
-        
-        .slider {
-            width: 100%;
-            height: 8px;
-            border-radius: 4px;
-            outline: none;
-            -webkit-appearance: none;
-        }
-        
-        .slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #667eea;
-            cursor: pointer;
-        }
-        
-        .slider::-moz-range-thumb {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #667eea;
-            cursor: pointer;
-            border: none;
-        }
-        
-        .error {
-            color: #e74c3c;
-            margin-top: 10px;
-            text-align: center;
-            display: none;
-        }
-        
-        .success {
-            color: #27ae60;
-            margin-top: 10px;
-            text-align: center;
-            display: none;
-        }
-    </style>
+    <title>Avatar - RBLX Clone</title>
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🎨 Avatar Creator</h1>
-            <div>
-                <a href="/dashboard" class="button button-secondary">Back to Dashboard</a>
-            </div>
-        </div>
-        
-        <div class="avatar-creator">
-            <div class="character-preview">
-                <h2>Click on body parts to customize</h2>
-                <div class="character-canvas" id="characterCanvas">
-                    <!-- Body parts will be drawn here -->
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page" data-avatar>
+        <header class="topbar">
+            <a class="brand" href="/">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span>RBLX Clone</span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <a href="/dashboard">Dashboard</a>
+                <a href="/">Home</a>
+            </nav>
+        </header>
+
+        <main id="main">
+            <div class="dashboard-head">
+                <div>
+                    <p class="label">Avatar</p>
+                    <h1 class="page-title">Colors</h1>
                 </div>
+                <button class="button" type="button" data-save-avatar>Save avatar</button>
             </div>
-            
-            <div class="color-picker-panel">
-                <h2>Customize</h2>
-                
-                <div class="part-selector">
-                    <div class="part-button active" data-part="head">Head</div>
-                    <div class="part-button" data-part="torso">Torso</div>
-                    <div class="part-button" data-part="leftArm">Left Arm</div>
-                    <div class="part-button" data-part="rightArm">Right Arm</div>
-                    <div class="part-button" data-part="leftLeg">Left Leg</div>
-                    <div class="part-button" data-part="rightLeg">Right Leg</div>
-                </div>
-                
-                <div class="color-input-group">
-                    <label>Color Preview</label>
-                    <div class="color-preview" id="colorPreview"></div>
-                    
-                    <div class="slider-group">
-                        <label>Red: <span id="redValue">128</span></label>
-                        <input type="range" min="0" max="255" value="128" class="slider" id="redSlider">
-                    </div>
-                    
-                    <div class="slider-group">
-                        <label>Green: <span id="greenValue">128</span></label>
-                        <input type="range" min="0" max="255" value="128" class="slider" id="greenSlider">
-                    </div>
-                    
-                    <div class="slider-group">
-                        <label>Blue: <span id="blueValue">128</span></label>
-                        <input type="range" min="0" max="255" value="128" class="slider" id="blueSlider">
+
+            <section class="avatar-layout">
+                <div class="panel">
+                    <h2>Preview</h2>
+                    <div class="avatar-stage">
+                        <div class="avatar-figure" data-avatar-figure aria-label="Avatar preview"></div>
                     </div>
                 </div>
-                
-                <div class="error" id="error"></div>
-                <div class="success" id="success"></div>
-                
-                <button class="button button-success" id="saveButton" style="width: 100%; margin-top: 20px; padding: 15px;">
-                    Save Avatar
-                </button>
-            </div>
-        </div>
+
+                <div class="panel">
+                    <h2>Body part</h2>
+                    <div class="part-tabs" data-part-tabs></div>
+
+                    <div class="range-grid">
+                        <div class="color-preview" data-color-preview></div>
+                        <label class="range-row">
+                            <span>Red</span>
+                            <input type="range" min="0" max="255" value="128" data-slider="red">
+                            <strong data-value="red">128</strong>
+                        </label>
+                        <label class="range-row">
+                            <span>Green</span>
+                            <input type="range" min="0" max="255" value="128" data-slider="green">
+                            <strong data-value="green">128</strong>
+                        </label>
+                        <label class="range-row">
+                            <span>Blue</span>
+                            <input type="range" min="0" max="255" value="128" data-slider="blue">
+                            <strong data-value="blue">128</strong>
+                        </label>
+                    </div>
+
+                    <div class="status" data-status aria-live="polite"></div>
+                </div>
+            </section>
+        </main>
     </div>
-    
-    <script>
-        const token = localStorage.getItem('authToken');
-        if (!token) {
-            window.location.href = '/login';
-        }
-        
-        // Avatar data
-        let avatar = {
-            headColor: [0.8, 0.6, 0.4],
-            torsoColor: [0.2, 0.4, 0.8],
-            leftArmColor: [0.8, 0.6, 0.4],
-            rightArmColor: [0.8, 0.6, 0.4],
-            leftLegColor: [0.2, 0.6, 0.2],
-            rightLegColor: [0.2, 0.6, 0.2]
-        };
-        
-        let selectedPart = 'head';
-        
-        // Load avatar from server
-        async function loadAvatar() {
-            try {
-                const response = await fetch('/api/avatar', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-                const data = await response.json();
-                if (data.success && data.avatar) {
-                    avatar = data.avatar;
-                    updateCanvas();
-                    selectPart('head');
-                }
-            } catch (error) {
-                console.error('Error loading avatar:', error);
-            }
-        }
-        
-        // Draw character on canvas
-        function updateCanvas() {
-            const canvas = document.getElementById('characterCanvas');
-            canvas.innerHTML = '';
-            
-            const scale = 15;
-            const centerX = 150;
-            let centerY = 100;
-            
-            // Head (1.2x1.2)
-            const head = document.createElement('div');
-            head.className = 'body-part';
-            head.style.left = (centerX - 18) + 'px';
-            head.style.top = centerY + 'px';
-            head.style.width = '36px';
-            head.style.height = '36px';
-            head.style.backgroundColor = `rgb(${Math.round(avatar.headColor[0]*255)}, ${Math.round(avatar.headColor[1]*255)}, ${Math.round(avatar.headColor[2]*255)})`;
-            head.dataset.part = 'head';
-            head.addEventListener('click', () => selectPart('head'));
-            canvas.appendChild(head);
-            centerY += 50;
-            
-            // Torso (2x2)
-            const torso = document.createElement('div');
-            torso.className = 'body-part';
-            torso.style.left = (centerX - 30) + 'px';
-            torso.style.top = centerY + 'px';
-            torso.style.width = '60px';
-            torso.style.height = '60px';
-            torso.style.backgroundColor = `rgb(${Math.round(avatar.torsoColor[0]*255)}, ${Math.round(avatar.torsoColor[1]*255)}, ${Math.round(avatar.torsoColor[2]*255)})`;
-            torso.dataset.part = 'torso';
-            torso.addEventListener('click', () => selectPart('torso'));
-            canvas.appendChild(torso);
-            
-            // Left Arm (1x2, left of torso)
-            const leftArm = document.createElement('div');
-            leftArm.className = 'body-part';
-            leftArm.style.left = (centerX - 50) + 'px';
-            leftArm.style.top = centerY + 'px';
-            leftArm.style.width = '20px';
-            leftArm.style.height = '60px';
-            leftArm.style.backgroundColor = `rgb(${Math.round(avatar.leftArmColor[0]*255)}, ${Math.round(avatar.leftArmColor[1]*255)}, ${Math.round(avatar.leftArmColor[2]*255)})`;
-            leftArm.dataset.part = 'leftArm';
-            leftArm.addEventListener('click', () => selectPart('leftArm'));
-            canvas.appendChild(leftArm);
-            
-            // Right Arm (1x2, right of torso)
-            const rightArm = document.createElement('div');
-            rightArm.className = 'body-part';
-            rightArm.style.left = (centerX + 30) + 'px';
-            rightArm.style.top = centerY + 'px';
-            rightArm.style.width = '20px';
-            rightArm.style.height = '60px';
-            rightArm.style.backgroundColor = `rgb(${Math.round(avatar.rightArmColor[0]*255)}, ${Math.round(avatar.rightArmColor[1]*255)}, ${Math.round(avatar.rightArmColor[2]*255)})`;
-            rightArm.dataset.part = 'rightArm';
-            rightArm.addEventListener('click', () => selectPart('rightArm'));
-            canvas.appendChild(rightArm);
-            
-            centerY += 80;
-            
-            // Left Leg (1x2, below torso)
-            const leftLeg = document.createElement('div');
-            leftLeg.className = 'body-part';
-            leftLeg.style.left = (centerX - 25) + 'px';
-            leftLeg.style.top = centerY + 'px';
-            leftLeg.style.width = '20px';
-            leftLeg.style.height = '60px';
-            leftLeg.style.backgroundColor = `rgb(${Math.round(avatar.leftLegColor[0]*255)}, ${Math.round(avatar.leftLegColor[1]*255)}, ${Math.round(avatar.leftLegColor[2]*255)})`;
-            leftLeg.dataset.part = 'leftLeg';
-            leftLeg.addEventListener('click', () => selectPart('leftLeg'));
-            canvas.appendChild(leftLeg);
-            
-            // Right Leg (1x2, below torso)
-            const rightLeg = document.createElement('div');
-            rightLeg.className = 'body-part';
-            rightLeg.style.left = (centerX + 5) + 'px';
-            rightLeg.style.top = centerY + 'px';
-            rightLeg.style.width = '20px';
-            rightLeg.style.height = '60px';
-            rightLeg.style.backgroundColor = `rgb(${Math.round(avatar.rightLegColor[0]*255)}, ${Math.round(avatar.rightLegColor[1]*255)}, ${Math.round(avatar.rightLegColor[2]*255)})`;
-            rightLeg.dataset.part = 'rightLeg';
-            rightLeg.addEventListener('click', () => selectPart('rightLeg'));
-            canvas.appendChild(rightLeg);
-        }
-        
-        // Select a body part
-        function selectPart(part) {
-            selectedPart = part;
-            
-            // Update button states
-            document.querySelectorAll('.part-button').forEach(btn => {
-                btn.classList.remove('active');
-                if (btn.dataset.part === part) {
-                    btn.classList.add('active');
-                }
-            });
-            
-            // Update canvas selection
-            document.querySelectorAll('.body-part').forEach(el => {
-                el.classList.remove('selected');
-                if (el.dataset.part === part) {
-                    el.classList.add('selected');
-                }
-            });
-            
-            // Update sliders
-            const color = avatar[part + 'Color'];
-            document.getElementById('redSlider').value = Math.round(color[0] * 255);
-            document.getElementById('greenSlider').value = Math.round(color[1] * 255);
-            document.getElementById('blueSlider').value = Math.round(color[2] * 255);
-            updateColorPreview();
-        }
-        
-        // Update color preview
-        function updateColorPreview() {
-            const r = parseInt(document.getElementById('redSlider').value);
-            const g = parseInt(document.getElementById('greenSlider').value);
-            const b = parseInt(document.getElementById('blueSlider').value);
-            
-            document.getElementById('redValue').textContent = r;
-            document.getElementById('greenValue').textContent = g;
-            document.getElementById('blueValue').textContent = b;
-            
-            document.getElementById('colorPreview').style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
-            
-            // Update avatar data
-            avatar[selectedPart + 'Color'] = [r/255, g/255, b/255];
-            
-            // Update canvas
-            updateCanvas();
-        }
-        
-        // Save avatar
-        async function saveAvatar() {
-            const errorDiv = document.getElementById('error');
-            const successDiv = document.getElementById('success');
-            const saveButton = document.getElementById('saveButton');
-            
-            errorDiv.style.display = 'none';
-            successDiv.style.display = 'none';
-            saveButton.disabled = true;
-            saveButton.textContent = 'Saving...';
-            
-            try {
-                const response = await fetch('/api/avatar', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({
-                        avatar: avatar
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    successDiv.textContent = 'Avatar saved successfully!';
-                    successDiv.style.display = 'block';
-                    setTimeout(() => {
-                        successDiv.style.display = 'none';
-                    }, 3000);
-                } else {
-                    errorDiv.textContent = data.error || 'Failed to save avatar';
-                    errorDiv.style.display = 'block';
-                    console.error('Save error:', data);
-                }
-            } catch (error) {
-                errorDiv.textContent = 'Network error. Please try again.';
-                errorDiv.style.display = 'block';
-            } finally {
-                saveButton.disabled = false;
-                saveButton.textContent = 'Save Avatar';
-            }
-        }
-        
-        // Event listeners
-        document.querySelectorAll('.part-button').forEach(btn => {
-            btn.addEventListener('click', () => selectPart(btn.dataset.part));
-        });
-        
-        document.getElementById('redSlider').addEventListener('input', updateColorPreview);
-        document.getElementById('greenSlider').addEventListener('input', updateColorPreview);
-        document.getElementById('blueSlider').addEventListener('input', updateColorPreview);
-        
-        document.getElementById('saveButton').addEventListener('click', saveAvatar);
-        
-        // Initialize
-        loadAvatar();
-    </script>
+    <script src="/app.js" defer></script>
 </body>
 </html>
-

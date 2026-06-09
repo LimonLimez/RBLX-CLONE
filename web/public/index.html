@@ -3,82 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RBLX Game Engine</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        
-        .container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 40px;
-            max-width: 500px;
-            width: 90%;
-            text-align: center;
-        }
-        
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 2.5em;
-        }
-        
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-        }
-        
-        .button {
-            display: inline-block;
-            padding: 15px 40px;
-            margin: 10px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-decoration: none;
-            border-radius: 50px;
-            font-weight: bold;
-            transition: transform 0.2s, box-shadow 0.2s;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        
-        .button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
-        }
-        
-        .button-secondary {
-            background: #f0f0f0;
-            color: #333;
-        }
-        
-        .button-secondary:hover {
-            background: #e0e0e0;
-        }
-    </style>
+    <title>RBLX Clone</title>
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>🎮 RBLX Game Engine</h1>
-        <p class="subtitle">Welcome to the future of game creation</p>
-        <a href="/login" class="button">Login</a>
-        <a href="/signup" class="button button-secondary">Sign Up</a>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page">
+        <header class="topbar">
+            <a class="brand" href="/" aria-label="RBLX Clone home">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span>RBLX Clone</span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <a href="/login">Login</a>
+                <a href="/signup">Sign up</a>
+            </nav>
+        </header>
+
+        <main id="main" class="hero">
+            <section>
+                <p class="label">Local build</p>
+                <h1>Build. Test. Join.</h1>
+                <p class="lede">A small account and avatar service for the RBLX client, server, and Studio workflow.</p>
+                <div class="hero-actions">
+                    <a class="button" href="/signup">Create account</a>
+                    <a class="button secondary" href="/login">Use existing account</a>
+                </div>
+            </section>
+
+            <aside class="info-stack" aria-label="Project status">
+                <div class="info-row">
+                    <div class="label">Client</div>
+                    <div class="value">Connect to a local server</div>
+                </div>
+                <div class="info-row">
+                    <div class="label">Studio</div>
+                    <div class="value">Edit worlds and parts</div>
+                </div>
+                <div class="info-row">
+                    <div class="label">Account</div>
+                    <div class="value">Login and avatar colors</div>
+                </div>
+            </aside>
+        </main>
+
+        <section class="grid" aria-label="Setup overview">
+            <article class="panel">
+                <h2>1. Account</h2>
+                <p>Create a local account or sign in with one you already made.</p>
+            </article>
+            <article class="panel">
+                <h2>2. Avatar</h2>
+                <p>Set body colors from the avatar page. The client reads them after login.</p>
+            </article>
+            <article class="panel">
+                <h2>3. Play</h2>
+                <p>Start the server, open the player, and connect to 127.0.0.1.</p>
+            </article>
+        </section>
     </div>
 </body>
 </html>
-
-
