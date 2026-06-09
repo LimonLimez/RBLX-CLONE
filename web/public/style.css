@@ -336,8 +336,8 @@ input {
 
 .avatar-figure {
     position: relative;
-    width: min(280px, 70vw);
-    aspect-ratio: 3 / 5;
+    width: min(340px, 82vw);
+    aspect-ratio: 4 / 5;
     background: var(--bg);
     border: 2px solid var(--line);
 }
