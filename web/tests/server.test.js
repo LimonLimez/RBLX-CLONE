@@ -24,7 +24,8 @@ function createTestContext() {
             gameWorldsDir: path.join(directory, 'worlds'),
             serverExecutablePath: '',
             clientExecutablePath: '',
-            gameServerBasePort: 19000
+            gameServerBasePort: 19000,
+            gameInstanceEmptyGraceMs: 25
         }
     });
 
@@ -76,6 +77,10 @@ async function signup(baseUrl, username) {
 
     assert.equal(result.response.status, 201);
     return result.json;
+}
+
+function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 test('signup validates username and password input', async () => {
@@ -262,7 +267,7 @@ test('social profiles support search, friend requests, friends, and playtime', a
 });
 
 test('games can be published, listed, inspected, and allocated for play', async () => {
-    await withServer(async ({ baseUrl }) => {
+    await withServer(async ({ app, baseUrl }) => {
         const creator = await signup(baseUrl, 'CreatorOne');
 
         const publish = await request(baseUrl, 'POST', '/api/games', {
@@ -303,6 +308,7 @@ test('games can be published, listed, inspected, and allocated for play', async 
         assert.equal(play.json.success, true);
         assert.equal(play.json.server.host, '127.0.0.1');
         assert.equal(play.json.server.status, 'manual');
+        assert.equal(play.json.server.playerCount, 0);
         assert.equal(play.json.launch.args.includes('--connect'), true);
         assert.equal(play.json.player.launched, false);
 
@@ -310,5 +316,34 @@ test('games can be published, listed, inspected, and allocated for play', async 
         assert.equal(detailAfterPlay.response.status, 200);
         assert.equal(detailAfterPlay.json.servers.length, 1);
         assert.equal(detailAfterPlay.json.game.stats.launchCount, 1);
+
+        const instance = app.locals.gameInstances.get(play.json.server.id);
+        assert.ok(instance);
+
+        const deniedHeartbeat = await request(baseUrl, 'POST', `/api/game-instances/${play.json.server.id}/heartbeat`, {
+            playerCount: 1
+        }, 'wrong-token');
+        assert.equal(deniedHeartbeat.response.status, 403);
+
+        const activeHeartbeat = await request(baseUrl, 'POST', `/api/game-instances/${play.json.server.id}/heartbeat`, {
+            playerCount: 2
+        }, instance.managerToken);
+        assert.equal(activeHeartbeat.response.status, 200);
+        assert.equal(activeHeartbeat.json.server.playerCount, 2);
+
+        const detailWithPlayers = await request(baseUrl, 'GET', `/api/games/${publish.json.game.id}`);
+        assert.equal(detailWithPlayers.json.servers[0].playerCount, 2);
+
+        const emptyHeartbeat = await request(baseUrl, 'POST', `/api/game-instances/${play.json.server.id}/heartbeat`, {
+            playerCount: 0
+        }, instance.managerToken);
+        assert.equal(emptyHeartbeat.response.status, 200);
+        assert.equal(emptyHeartbeat.json.server.playerCount, 0);
+        assert.equal(typeof emptyHeartbeat.json.server.emptyShutdownAt, 'string');
+
+        await wait(50);
+
+        const detailAfterEmpty = await request(baseUrl, 'GET', `/api/games/${publish.json.game.id}`);
+        assert.deepEqual(detailAfterEmpty.json.servers, []);
     });
 });

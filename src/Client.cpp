@@ -809,50 +809,22 @@ void renderAuthMenu(float uiScale) {
     ImGui::End();
 }
 
-void renderPlayMenu(GLFWwindow* nativeWindow, std::deque<Part>& parts, PhysicsWorld& physicsWorld, float uiScale) {
+void renderPlayMenu(float uiScale) {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const float panelWidth = std::min(display.x - UiScale::Px(40.0f, uiScale), UiScale::Px(620.0f, uiScale));
-    const float panelHeight = UiScale::Px(330.0f, uiScale);
+    const float panelHeight = UiScale::Px(270.0f, uiScale);
     ImGui::SetNextWindowPos(ImVec2((display.x - panelWidth) * 0.5f, (display.y - panelHeight) * 0.5f), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(panelWidth, panelHeight), ImGuiCond_Always);
 
     if (ImGui::Begin("PlayMenu", nullptr, overlayFlags())) {
         drawLabel(std::strlen(authToken) > 0 ? "SIGNED IN" : "GUEST SESSION");
         ImGui::Text("Welcome, %s", myUsername);
-        ImGui::TextWrapped("Choose how you want to play.");
+        ImGui::TextWrapped("Find a game on the website, then press Play there.");
         ImGui::Spacing();
 
         if (modernButton("Play online", ImVec2(-1, UiScale::Px(52.0f, uiScale)), ImVec4(0.10f, 0.50f, 0.95f, 1.0f))) {
-            std::string error;
-            if (!connectToServer(error)) {
-                showLoginError = true;
-                copyToBuffer(loginErrorMsg, sizeof(loginErrorMsg), error);
-            } else {
-                showLoginError = false;
-            }
-        }
-
-        if (modernButton("Play offline", ImVec2(-1, UiScale::Px(48.0f, uiScale)), ImVec4(0.12f, 0.62f, 0.42f, 1.0f))) {
-            std::string path = openFileDialog(nativeWindow);
-            if (!path.empty()) {
-                WorldLoader::loadWorld(path, parts, physicsWorld);
-                if (myCharacter) delete myCharacter;
-                glm::vec3 spawnPos(0, 10, 0);
-                for (const auto& p : parts) {
-                    if (p.isSpawn) spawnPos = p.position + glm::vec3(0, 2, 0);
-                }
-                myCharacter = new Character(spawnPos, &physicsWorld, &parts,
-                    currentAvatar.headColor, currentAvatar.torsoColor,
-                    currentAvatar.leftArmColor, currentAvatar.rightArmColor,
-                    currentAvatar.leftLegColor, currentAvatar.rightLegColor);
-                if (myCharacter) {
-                    myCharacter->setFaceTexture(textureForFace(currentAvatar.faceId));
-                }
-                currentState = OFFLINE;
-                lastFrame = static_cast<float>(glfwGetTime());
-                addChatLine("System", "Offline world loaded.", true);
-                showLoginError = false;
-            }
+            Auth::openBrowser(automaticWebServerUrl() + "/games");
+            showLoginError = false;
         }
 
         if (modernButton("Switch account", ImVec2(-1, UiScale::Px(42.0f, uiScale)), ImVec4(0.16f, 0.18f, 0.23f, 1.0f))) {
@@ -1280,9 +1252,27 @@ int main(int argc, char** argv) {
             if (currentState == MENU_AUTH_CHOICE || currentState == MENU) {
                 renderAuthMenu(uiScale);
             } else if (currentState == MENU_PLAY_CHOICE) {
-                renderPlayMenu(window.getNativeWindow(), parts, physicsWorld, uiScale);
+                renderPlayMenu(uiScale);
             }
             renderGameHud(parts, physicsWorld, uiScale);
+
+            if (currentState != ONLINE && currentState != OFFLINE) {
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glDrawBuffer(GL_BACK);
+                glReadBuffer(GL_BACK);
+                glViewport(0, 0, window.getWidth(), window.getHeight());
+                glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+                ImGui::Render();
+                ImDrawData* drawData = ImGui::GetDrawData();
+                if (drawData) {
+                    ImGui_ImplOpenGL3_RenderDrawData(drawData);
+                }
+                window.swapBuffers();
+                frameCount++;
+                continue;
+            }
 
             // ... Network & Physics Logic (Keep logic running)
             if (isConnected && clientSocket != INVALID_SOCKET) {
@@ -1978,6 +1968,9 @@ int main(int argc, char** argv) {
                 shadowMap.unbind();
             }
 
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glDrawBuffer(GL_BACK);
+            glReadBuffer(GL_BACK);
             glViewport(0, 0, window.getWidth(), window.getHeight());
             glClearColor(0.53f, 0.81f, 0.92f, 1.0f); // Sky Blue
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

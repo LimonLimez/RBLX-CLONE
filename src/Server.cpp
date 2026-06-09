@@ -48,9 +48,14 @@ struct ConnectedPlayer {
 std::map<int, ConnectedPlayer> players;
 int nextPlayerId = 1;
 std::string webServerUrl = "http://localhost:3000"; // Web server URL for token verification
+std::string gameInstanceId;
+std::string gameInstanceToken;
 const float MAX_PLAYER_COORDINATE = 10000.0f;
 const float MAX_PLAYER_ROTATION_DEGREES = 100000.0f;
 const int PLAYTIME_REPORT_INTERVAL_SECONDS = 60;
+const int INSTANCE_HEARTBEAT_INTERVAL_SECONDS = 5;
+std::chrono::steady_clock::time_point lastInstanceHeartbeatAt = std::chrono::steady_clock::time_point::min();
+int lastReportedActivePlayers = -1;
 
 // Server World State
 std::deque<Part> serverParts;
@@ -68,6 +73,10 @@ void parseServerArguments(int argc, char** argv, int& serverPort, std::string& w
             worldPath = argv[++i];
         } else if (arg == "--web" && i + 1 < argc) {
             webServerUrl = argv[++i];
+        } else if (arg == "--instance" && i + 1 < argc) {
+            gameInstanceId = argv[++i];
+        } else if (arg == "--instance-token" && i + 1 < argc) {
+            gameInstanceToken = argv[++i];
         }
     }
 }
@@ -183,6 +192,41 @@ void reportPlayerPlaytime(ConnectedPlayer& player, std::chrono::steady_clock::ti
         std::cerr << "Could not record playtime for player " << playerId << std::endl;
     }
     player.lastPlaytimeReportedAt = now;
+}
+
+int activePlayerCount() {
+    int count = 0;
+    for (const auto& [id, player] : players) {
+        if (player.active) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void reportInstanceHeartbeat(bool force) {
+    if (gameInstanceId.empty() || gameInstanceToken.empty()) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const int playerCount = activePlayerCount();
+    const bool countChanged = playerCount != lastReportedActivePlayers;
+    const bool intervalElapsed = lastInstanceHeartbeatAt == std::chrono::steady_clock::time_point::min() ||
+        now - lastInstanceHeartbeatAt >= std::chrono::seconds(INSTANCE_HEARTBEAT_INTERVAL_SECONDS);
+
+    if (!force && !countChanged && !intervalElapsed) {
+        return;
+    }
+
+    if (!ServerAuth::reportInstanceHeartbeat(gameInstanceId, gameInstanceToken, playerCount, webServerUrl)) {
+        std::cerr << "Could not report heartbeat for game instance " << gameInstanceId << std::endl;
+        lastInstanceHeartbeatAt = now;
+        return;
+    }
+
+    lastReportedActivePlayers = playerCount;
+    lastInstanceHeartbeatAt = now;
 }
 
 void broadcast(const void* data, int size, int excludeId = -1) {
@@ -397,6 +441,7 @@ int main(int argc, char** argv) {
     // Load Server World
     WorldLoader::loadWorld(worldPath, serverParts, serverPhysicsWorld);
     std::cout << "Loaded ServerWorld with " << serverParts.size() << " parts." << std::endl;
+    reportInstanceHeartbeat(true);
 
     auto lastTime = std::chrono::high_resolution_clock::now();
     float physicsAccumulator = 0.0f;
@@ -427,6 +472,7 @@ int main(int argc, char** argv) {
                 reportPlayerPlaytime(player, std::chrono::steady_clock::now(), id, false);
             }
         }
+        reportInstanceHeartbeat(false);
 
         // Network Broadcast (60Hz - match physics rate for smooth updates)
         if (networkAccumulator >= 1.0f/60.0f) {
@@ -523,6 +569,7 @@ int main(int argc, char** argv) {
                         }
 
                         player.active = true;
+                        reportInstanceHeartbeat(true);
 
                         PacketWelcome welcome = { id };
                         if (!Network::sendStructPacket(player.socket, PacketType::WELCOME, welcome)) {
@@ -681,6 +728,7 @@ int main(int argc, char** argv) {
                 PacketPlayerLeave leavePkt = { id };
                 broadcastPacket(PacketProtocol::buildStructPacket(PacketType::PLAYER_LEAVE, leavePkt), id);
                 broadcastPlayerList();
+                reportInstanceHeartbeat(true);
             }
 
             players.erase(id);

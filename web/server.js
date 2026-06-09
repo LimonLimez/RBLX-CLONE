@@ -99,6 +99,7 @@ function loadConfig(env = process.env) {
         gameWorldsDir: resolveConfiguredPath(env.GAME_WORLDS_DIR, path.join(__dirname, 'game-worlds')),
         gameServerHost: env.GAME_SERVER_HOST || '127.0.0.1',
         gameServerBasePort: parseInteger(env.GAME_SERVER_BASE_PORT, 7777),
+        gameInstanceEmptyGraceMs: parseInteger(env.GAME_INSTANCE_EMPTY_GRACE_MS, 30 * 1000),
         publicBaseUrl: env.PUBLIC_BASE_URL || `http://localhost:${port}`,
         serverExecutablePath,
         clientExecutablePath
@@ -317,6 +318,11 @@ function clampPlaytimeSeconds(value) {
     const seconds = Number.parseInt(value, 10);
     if (!Number.isFinite(seconds) || seconds <= 0) return 0;
     return Math.min(seconds, 24 * 60 * 60);
+}
+
+function parsePlayerCount(value) {
+    const count = Number.parseInt(value, 10);
+    return Number.isInteger(count) && count >= 0 && count <= 200 ? count : -1;
 }
 
 function escapeLike(value) {
@@ -584,20 +590,89 @@ async function seedStarterGame(db, config) {
         ownerId = result.lastID;
     }
 
-    const rootWorldPath = path.join(config.repoRoot || path.resolve(__dirname, '..'), 'ServerWorld.world');
-    if (!fs.existsSync(rootWorldPath)) return;
+    const repoRoot = config.repoRoot || path.resolve(__dirname, '..');
+    const starterGames = [
+        {
+            worldPath: path.join(repoRoot, 'ServerWorld.world'),
+            title: 'Starter Baseplate',
+            description: 'The default shared world, now published as the first public game.'
+        },
+        {
+            worldPath: path.join(__dirname, 'seed-worlds', 'separate-server-test.world'),
+            title: 'Separate Server Test Arena',
+            description: 'A second published world for testing that each game starts its own local server instance.'
+        }
+    ];
 
-    const worldText = fs.readFileSync(rootWorldPath, 'utf8');
-    await createGameRecord(db, config, { id: ownerId }, {
-        title: 'Starter Baseplate',
-        description: 'The default shared world, now published as the first public game.',
-        isPublic: true,
-        worldText
-    });
+    for (const seed of starterGames) {
+        if (!fs.existsSync(seed.worldPath)) continue;
+
+        const worldText = fs.readFileSync(seed.worldPath, 'utf8');
+        await createGameRecord(db, config, { id: ownerId }, {
+            title: seed.title,
+            description: seed.description,
+            isPublic: true,
+            worldText
+        });
+    }
 }
 
 function isChildRunning(child) {
     return child && child.exitCode === null && !child.killed;
+}
+
+function clearEmptyShutdown(instance) {
+    if (instance.shutdownTimer) {
+        clearTimeout(instance.shutdownTimer);
+        instance.shutdownTimer = null;
+    }
+    instance.emptyShutdownAt = null;
+}
+
+function stopGameInstance(app, instance, reason = 'idle') {
+    if (!instance || !app.locals.gameInstances.has(instance.id)) return false;
+
+    clearEmptyShutdown(instance);
+    instance.status = 'stopping';
+    instance.stopReason = reason;
+
+    if (isChildRunning(instance.child)) {
+        try {
+            instance.child.kill();
+        } catch (error) {
+            if (app.locals.config.nodeEnv !== 'test') {
+                console.error(`Could not stop game instance ${instance.id}:`, error.message);
+            }
+        }
+    }
+
+    app.locals.gameInstances.delete(instance.id);
+    return true;
+}
+
+function scheduleEmptyShutdown(app, instance) {
+    if (!instance || Number(instance.playerCount || 0) > 0) {
+        if (instance) clearEmptyShutdown(instance);
+        return;
+    }
+
+    const config = app.locals.config;
+    const now = Date.now();
+    const emptySinceMs = instance.emptySince ? Date.parse(instance.emptySince) : now;
+    const startedEmptyAt = Number.isFinite(emptySinceMs) ? emptySinceMs : now;
+    const delayMs = Math.max(0, config.gameInstanceEmptyGraceMs - (now - startedEmptyAt));
+
+    clearEmptyShutdown(instance);
+    instance.emptySince = new Date(startedEmptyAt).toISOString();
+    instance.emptyShutdownAt = new Date(now + delayMs).toISOString();
+    instance.shutdownTimer = setTimeout(() => {
+        const current = app.locals.gameInstances.get(instance.id);
+        if (!current || Number(current.playerCount || 0) > 0) return;
+        stopGameInstance(app, current, 'empty');
+    }, delayMs);
+    if (typeof instance.shutdownTimer.unref === 'function') {
+        instance.shutdownTimer.unref();
+    }
 }
 
 async function isPortAvailable(host, port) {
@@ -623,8 +698,9 @@ async function findAvailablePort(host, startPort, usedPorts) {
 function activeGameInstances(app, gameId) {
     const active = [];
     for (const [instanceId, instance] of app.locals.gameInstances.entries()) {
-        const running = instance.status === 'manual' || isChildRunning(instance.child);
+        const running = instance.manual || isChildRunning(instance.child);
         if (!running) {
+            clearEmptyShutdown(instance);
             app.locals.gameInstances.delete(instanceId);
             continue;
         }
@@ -634,6 +710,49 @@ function activeGameInstances(app, gameId) {
         if (instance.gameId === gameId) active.push(instance);
     }
     return active;
+}
+
+function serializeGameInstance(instance) {
+    return {
+        id: instance.id,
+        host: instance.host,
+        port: instance.port,
+        status: instance.status,
+        processId: instance.processId,
+        startedAt: instance.startedAt,
+        playerCount: Number(instance.playerCount || 0),
+        lastHeartbeatAt: instance.lastHeartbeatAt || null,
+        emptySince: instance.emptySince || null,
+        emptyShutdownAt: instance.emptyShutdownAt || null
+    };
+}
+
+function reserveGameInstanceForLaunch(app, instance) {
+    if (!instance || instance.status === 'manual' || Number(instance.playerCount || 0) > 0) return;
+    instance.emptySince = new Date().toISOString();
+    scheduleEmptyShutdown(app, instance);
+}
+
+function updateInstanceHeartbeat(app, instance, playerCount) {
+    instance.playerCount = playerCount;
+    instance.lastHeartbeatAt = new Date().toISOString();
+
+    if (playerCount > 0) {
+        if (!instance.manual) {
+            instance.status = 'running';
+        }
+        instance.emptySince = null;
+        clearEmptyShutdown(instance);
+        return;
+    }
+
+    if (!instance.manual && instance.status === 'starting' && isChildRunning(instance.child)) {
+        instance.status = 'running';
+    }
+    if (!instance.emptySince) {
+        instance.emptySince = new Date().toISOString();
+    }
+    scheduleEmptyShutdown(app, instance);
 }
 
 async function ensureGameInstance(app, game, options = {}) {
@@ -651,16 +770,26 @@ async function ensureGameInstance(app, game, options = {}) {
         host: config.gameServerHost || '127.0.0.1',
         port,
         status: 'manual',
+        manual: true,
         startedAt: new Date().toISOString(),
+        playerCount: 0,
+        lastHeartbeatAt: null,
+        emptySince: null,
+        emptyShutdownAt: null,
+        shutdownTimer: null,
+        managerToken: crypto.randomBytes(24).toString('hex'),
         processId: null,
         command: ''
     };
 
     if (config.serverExecutablePath && fs.existsSync(config.serverExecutablePath) && game.world_path) {
+        instance.manual = false;
         const args = [
             '--port', String(port),
             '--world', game.world_path,
-            '--web', config.publicBaseUrl || `http://localhost:${config.port || 3000}`
+            '--web', config.publicBaseUrl || `http://localhost:${config.port || 3000}`,
+            '--instance', instance.id,
+            '--instance-token', instance.managerToken
         ];
         const child = spawn(config.serverExecutablePath, args, {
             cwd: config.repoRoot || path.resolve(__dirname, '..'),
@@ -672,6 +801,17 @@ async function ensureGameInstance(app, game, options = {}) {
         instance.processId = child.pid || null;
         instance.status = 'starting';
         instance.command = `"${config.serverExecutablePath}" ${args.map((arg) => `"${arg}"`).join(' ')}`;
+        child.once('exit', () => {
+            const current = app.locals.gameInstances.get(instance.id);
+            if (current && current.child === child) {
+                clearEmptyShutdown(current);
+                app.locals.gameInstances.delete(instance.id);
+            }
+        });
+        child.once('error', (error) => {
+            instance.status = 'error';
+            instance.lastError = error.message;
+        });
     } else {
         instance.command = `Server.exe --port ${port} --world "${game.world_path}" --web "${config.publicBaseUrl || 'http://localhost:3000'}"`;
     }
@@ -1116,6 +1256,34 @@ function createApp(options = {}) {
         }
     });
 
+    app.post('/api/game-instances/:id/heartbeat', async (req, res, next) => {
+        try {
+            await ready;
+            const instance = app.locals.gameInstances.get(String(req.params.id || ''));
+            if (!instance) {
+                res.status(404).json({ error: 'Game instance not found.' });
+                return;
+            }
+
+            const managerToken = extractBearerToken(req);
+            if (!managerToken || managerToken !== instance.managerToken) {
+                res.status(403).json({ error: 'Game instance token is invalid.' });
+                return;
+            }
+
+            const playerCount = parsePlayerCount(req.body && req.body.playerCount);
+            if (playerCount < 0) {
+                res.status(400).json({ error: 'Player count must be a number from 0 to 200.' });
+                return;
+            }
+
+            updateInstanceHeartbeat(app, instance, playerCount);
+            res.json({ success: true, server: serializeGameInstance(instance) });
+        } catch (error) {
+            next(error);
+        }
+    });
+
     app.get('/api/users/search', authenticate, async (req, res, next) => {
         try {
             const query = String(req.query.q || '').trim().slice(0, 30);
@@ -1381,14 +1549,7 @@ function createApp(options = {}) {
             res.json({
                 success: true,
                 game: serializeGame(row, req.user && req.user.id === row.owner_id),
-                servers: activeGameInstances(app, row.id).map((instance) => ({
-                    id: instance.id,
-                    host: instance.host,
-                    port: instance.port,
-                    status: instance.status,
-                    processId: instance.processId,
-                    startedAt: instance.startedAt
-                }))
+                servers: activeGameInstances(app, row.id).map(serializeGameInstance)
             });
         } catch (error) {
             next(error);
@@ -1425,14 +1586,7 @@ function createApp(options = {}) {
 
             res.json({
                 success: true,
-                servers: activeGameInstances(app, row.id).map((instance) => ({
-                    id: instance.id,
-                    host: instance.host,
-                    port: instance.port,
-                    status: instance.status,
-                    processId: instance.processId,
-                    startedAt: instance.startedAt
-                }))
+                servers: activeGameInstances(app, row.id).map(serializeGameInstance)
             });
         } catch (error) {
             next(error);
@@ -1451,6 +1605,7 @@ function createApp(options = {}) {
             const instance = await ensureGameInstance(app, row, {
                 forceNew: Boolean(req.body && req.body.newServer)
             });
+            reserveGameInstanceForLaunch(app, instance);
             await dbRun(db, `UPDATE games
                 SET launch_count = launch_count + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?`, [row.id]);
@@ -1464,14 +1619,7 @@ function createApp(options = {}) {
             res.json({
                 success: true,
                 game: serializeGame({ ...row, launch_count: Number(row.launch_count || 0) + 1 }),
-                server: {
-                    id: instance.id,
-                    host: instance.host,
-                    port: instance.port,
-                    status: instance.status,
-                    processId: instance.processId,
-                    startedAt: instance.startedAt
-                },
+                server: serializeGameInstance(instance),
                 launch,
                 player
             });

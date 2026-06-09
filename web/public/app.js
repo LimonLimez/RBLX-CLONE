@@ -1321,7 +1321,8 @@ function renderServerList(container, servers) {
         const address = document.createElement('strong');
         address.textContent = `${server.host}:${server.port}`;
         const meta = document.createElement('span');
-        meta.textContent = `${server.status}${server.processId ? ` - PID ${server.processId}` : ''}`;
+        const playerCount = Number(server.playerCount || 0);
+        meta.textContent = `${server.status} - ${playerCount} player${playerCount === 1 ? '' : 's'}${server.processId ? ` - PID ${server.processId}` : ''}`;
         row.append(address, meta);
         container.appendChild(row);
     }

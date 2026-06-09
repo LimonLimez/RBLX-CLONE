@@ -194,3 +194,17 @@ bool ServerAuth::recordPlaytime(const std::string& token, int seconds, const std
     const std::string response = httpRequest("POST", serverUrl, L"/api/me/playtime", body.str(), token);
     return !response.empty() && jsonBoolTrue(response, "success");
 }
+
+bool ServerAuth::reportInstanceHeartbeat(const std::string& instanceId, const std::string& managerToken, int playerCount, const std::string& serverUrl) {
+    if (instanceId.empty() || managerToken.empty()) return false;
+
+    std::wstring path = L"/api/game-instances/";
+    path += std::wstring(instanceId.begin(), instanceId.end());
+    path += L"/heartbeat";
+
+    std::ostringstream body;
+    body << "{\"playerCount\":" << (playerCount < 0 ? 0 : playerCount) << "}";
+
+    const std::string response = httpRequest("POST", serverUrl, path, body.str(), managerToken);
+    return !response.empty() && jsonBoolTrue(response, "success");
+}
