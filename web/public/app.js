@@ -173,6 +173,19 @@ function rgb(color) {
     return `rgb(${color.map((value) => Math.round(value * 255)).join(', ')})`;
 }
 
+function colorToHex(color) {
+    return `#${color.map((value) => Math.round(value * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function hexToColor(hex) {
+    const value = hex.replace('#', '');
+    return [
+        parseInt(value.slice(0, 2), 16) / 255,
+        parseInt(value.slice(2, 4), 16) / 255,
+        parseInt(value.slice(4, 6), 16) / 255
+    ];
+}
+
 function initAvatar() {
     const root = document.querySelector('[data-avatar]');
     if (!root) return;
@@ -187,27 +200,18 @@ function initAvatar() {
     let selected = 'head';
     const figure = document.querySelector('[data-avatar-figure]');
     const tabs = document.querySelector('[data-part-tabs]');
-    const preview = document.querySelector('[data-color-preview]');
+    const colorPicker = document.querySelector('[data-color-picker]');
+    const colorCode = document.querySelector('[data-color-code]');
     const status = document.querySelector('[data-status]');
-    const sliders = {
-        red: document.querySelector('[data-slider="red"]'),
-        green: document.querySelector('[data-slider="green"]'),
-        blue: document.querySelector('[data-slider="blue"]')
-    };
 
     function selectedKey() {
         return avatarParts.find(([id]) => id === selected)[2];
     }
 
-    function syncSliders() {
-        const color = avatar[selectedKey()];
-        sliders.red.value = Math.round(color[0] * 255);
-        sliders.green.value = Math.round(color[1] * 255);
-        sliders.blue.value = Math.round(color[2] * 255);
-        document.querySelector('[data-value="red"]').textContent = sliders.red.value;
-        document.querySelector('[data-value="green"]').textContent = sliders.green.value;
-        document.querySelector('[data-value="blue"]').textContent = sliders.blue.value;
-        preview.style.background = rgb(color);
+    function syncColorPicker() {
+        const hex = colorToHex(avatar[selectedKey()]);
+        colorPicker.value = hex;
+        colorCode.value = hex.toUpperCase();
     }
 
     function drawAvatar() {
@@ -244,22 +248,16 @@ function initAvatar() {
         selected = id;
         drawAvatar();
         drawTabs();
-        syncSliders();
+        syncColorPicker();
     }
 
     function updateSelectedColor() {
-        avatar[selectedKey()] = [
-            Number(sliders.red.value) / 255,
-            Number(sliders.green.value) / 255,
-            Number(sliders.blue.value) / 255
-        ];
+        avatar[selectedKey()] = hexToColor(colorPicker.value);
         drawAvatar();
-        syncSliders();
+        syncColorPicker();
     }
 
-    Object.values(sliders).forEach((slider) => {
-        slider.addEventListener('input', updateSelectedColor);
-    });
+    colorPicker.addEventListener('input', updateSelectedColor);
 
     document.querySelector('[data-save-avatar]').addEventListener('click', async () => {
         const button = document.querySelector('[data-save-avatar]');

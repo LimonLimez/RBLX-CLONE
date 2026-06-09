@@ -41,23 +41,12 @@
                     <h2>Body part</h2>
                     <div class="part-tabs" data-part-tabs></div>
 
-                    <div class="range-grid">
-                        <div class="color-preview" data-color-preview></div>
-                        <label class="range-row">
-                            <span>Red</span>
-                            <input type="range" min="0" max="255" value="128" data-slider="red">
-                            <strong data-value="red">128</strong>
+                    <div class="color-picker-panel">
+                        <label class="color-picker-field">
+                            <span>Color</span>
+                            <input type="color" value="#cc9966" data-color-picker aria-label="Selected body part color">
                         </label>
-                        <label class="range-row">
-                            <span>Green</span>
-                            <input type="range" min="0" max="255" value="128" data-slider="green">
-                            <strong data-value="green">128</strong>
-                        </label>
-                        <label class="range-row">
-                            <span>Blue</span>
-                            <input type="range" min="0" max="255" value="128" data-slider="blue">
-                            <strong data-value="blue">128</strong>
-                        </label>
+                        <output class="color-code" data-color-code>#CC9966</output>
                     </div>
 
                     <div class="status" data-status aria-live="polite"></div>
