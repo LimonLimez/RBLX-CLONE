@@ -39,6 +39,7 @@ public:
     float maxHealth;
     void takeDamage(float amount);
     void respawn();
+    void setFaceTexture(unsigned int textureId);
     
     // Get the folder index for this character (for cleanup)
     int getFolderIndex() const;

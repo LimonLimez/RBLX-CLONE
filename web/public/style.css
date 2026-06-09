@@ -407,6 +407,47 @@ input {
     background: var(--bg);
 }
 
+.face-picker-panel {
+    display: grid;
+    gap: var(--space-2);
+    margin: var(--space-4) 0;
+}
+
+.face-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: var(--space-2);
+}
+
+.face-option {
+    display: grid;
+    gap: var(--space-1);
+    justify-items: center;
+    border: 2px solid var(--line);
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 108px;
+    padding: var(--space-2);
+    cursor: pointer;
+    font-weight: 900;
+}
+
+.face-option:hover,
+.face-option:focus-visible,
+.face-option.active {
+    background: var(--fg);
+    color: var(--bg);
+    outline: none;
+}
+
+.face-option img {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    background: #ffffff;
+    border: 2px solid currentColor;
+}
+
 .dashboard-grid,
 .search-layout,
 .profile-layout {

@@ -125,7 +125,9 @@ Authentication:
 Avatar:
 
 - `GET /api/avatar` with `Authorization: Bearer <token>`
-- `POST /api/avatar` with `Authorization: Bearer <token>` and JSON `{ "avatar": { ...six RGB arrays... } }`
+- `POST /api/avatar` with `Authorization: Bearer <token>` and JSON `{ "avatar": { ...six RGB arrays..., "faceId": "wink" } }`
+
+Valid avatar `faceId` values are `classic`, `happy`, `surprised`, `smirk`, and `wink`. The web previews and native Client use the same transparent face PNG assets.
 
 Profiles and friends:
 

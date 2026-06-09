@@ -159,6 +159,15 @@ bool isCursorLocked = false; // Start unlocked for login
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 unsigned int faceTextureId = 0;
+const std::string DEFAULT_FACE_ID = "classic";
+const std::vector<std::pair<std::string, const char*>> FACE_TEXTURE_FILES = {
+    {"classic", "face.png"},
+    {"happy", "face-happy.png"},
+    {"surprised", "face-surprised.png"},
+    {"smirk", "face-smirk.png"},
+    {"wink", "face-wink.png"}
+};
+std::map<std::string, unsigned int> faceTextureIds;
 
 enum GameState {
     MENU,
@@ -190,6 +199,61 @@ std::vector<char> clientReceiveBuffer;
 
 Character* myCharacter = nullptr;
 AvatarConfig currentAvatar;
+
+bool isKnownFaceId(const std::string& faceId) {
+    return faceId == "classic" ||
+           faceId == "happy" ||
+           faceId == "surprised" ||
+           faceId == "smirk" ||
+           faceId == "wink";
+}
+
+std::string normalizeFaceId(const std::string& faceId) {
+    return isKnownFaceId(faceId) ? faceId : DEFAULT_FACE_ID;
+}
+
+unsigned int textureForFace(const std::string& faceId) {
+    const std::string safeFaceId = normalizeFaceId(faceId);
+    auto face = faceTextureIds.find(safeFaceId);
+    if (face != faceTextureIds.end()) {
+        return face->second;
+    }
+
+    auto defaultFace = faceTextureIds.find(DEFAULT_FACE_ID);
+    return defaultFace != faceTextureIds.end() ? defaultFace->second : 0;
+}
+
+void loadFaceTextures() {
+    faceTextureIds.clear();
+    for (const auto& face : FACE_TEXTURE_FILES) {
+        unsigned int textureId = loadTexture(face.second);
+        if (textureId > 0) {
+            faceTextureIds[face.first] = textureId;
+            std::cout << "Face Texture Loaded: " << face.first << " (ID: " << textureId << ")" << std::endl;
+        }
+    }
+
+    faceTextureId = textureForFace(DEFAULT_FACE_ID);
+    if (faceTextureId == 0) {
+        std::cout << "WARNING: Face textures failed to load! Check if face PNG files exist and are valid." << std::endl;
+    }
+}
+
+std::string jsonStringField(const std::string& json, const std::string& name) {
+    size_t pos = json.find("\"" + name + "\"");
+    if (pos == std::string::npos) return {};
+
+    pos = json.find(":", pos);
+    if (pos == std::string::npos) return {};
+
+    pos = json.find("\"", pos);
+    if (pos == std::string::npos) return {};
+
+    size_t end = json.find("\"", pos + 1);
+    if (end == std::string::npos || end <= pos + 1) return {};
+
+    return json.substr(pos + 1, end - pos - 1);
+}
 
 // Interpolation Struct
 struct NetworkTransform {
@@ -335,12 +399,7 @@ int main() {
         // Load saved avatar (will be fetched from server when logged in)
         currentAvatar.loadFromFile("avatar.txt");
         
-        faceTextureId = loadTexture("face.png");
-        if (faceTextureId > 0) {
-            std::cout << "Face Texture Loaded successfully (ID: " << faceTextureId << ")" << std::endl;
-        } else {
-            std::cout << "WARNING: Face texture failed to load! Check if face.png exists and is a valid image." << std::endl;
-        }
+        loadFaceTextures();
 
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
@@ -523,6 +582,7 @@ int main() {
                                         parseColorArray("rightArmColor", currentAvatar.rightArmColor);
                                         parseColorArray("leftLegColor", currentAvatar.leftLegColor);
                                         parseColorArray("rightLegColor", currentAvatar.rightLegColor);
+                                        currentAvatar.faceId = normalizeFaceId(jsonStringField(avatarResponse, "faceId"));
                                         
                                         // Save to local file as backup
                                         currentAvatar.saveToFile("avatar.txt");
@@ -573,6 +633,9 @@ int main() {
                                 currentAvatar.headColor, currentAvatar.torsoColor,
                                 currentAvatar.leftArmColor, currentAvatar.rightArmColor,
                                 currentAvatar.leftLegColor, currentAvatar.rightLegColor);
+                            if (myCharacter) {
+                                myCharacter->setFaceTexture(textureForFace(currentAvatar.faceId));
+                            }
                             currentState = OFFLINE;
                             lastFrame = static_cast<float>(glfwGetTime()); 
                         }
@@ -807,6 +870,7 @@ int main() {
                                     glm::vec3 rightArmColor(0.8f, 0.6f, 0.4f);
                                     glm::vec3 leftLegColor(0.2f, 0.6f, 0.2f);
                                     glm::vec3 rightLegColor(0.2f, 0.6f, 0.2f);
+                                    std::string faceId = DEFAULT_FACE_ID;
                                     
                                     // Find player in playerList for avatar colors
                                     bool foundAvatar = false;
@@ -818,6 +882,7 @@ int main() {
                                             rightArmColor = glm::vec3(playerInfo.rightArmColor[0], playerInfo.rightArmColor[1], playerInfo.rightArmColor[2]);
                                             leftLegColor = glm::vec3(playerInfo.leftLegColor[0], playerInfo.leftLegColor[1], playerInfo.leftLegColor[2]);
                                             rightLegColor = glm::vec3(playerInfo.rightLegColor[0], playerInfo.rightLegColor[1], playerInfo.rightLegColor[2]);
+                                            faceId = normalizeFaceId(PacketProtocol::fixedString(playerInfo.faceId, sizeof(playerInfo.faceId)));
                                             foundAvatar = true;
                                             break;
                                         }
@@ -841,6 +906,7 @@ int main() {
                                             headColor, torsoColor, leftArmColor, rightArmColor, leftLegColor, rightLegColor);
                                         
                                         if (remoteChar) {
+                                            remoteChar->setFaceTexture(textureForFace(faceId));
                                             remoteChar->isRemote = true;
                                             remotePlayers[pkt->playerId] = remoteChar;
                                             std::cout << "Successfully created remote character for player " << pkt->playerId << " with avatar colors" << std::endl;
@@ -972,6 +1038,7 @@ int main() {
                                 for (uint32_t i = 0; i < playerCount; i++) {
                                     playerList.push_back(players[i]);
                                     playerNames[players[i].playerId] = players[i].username;
+                                    const std::string faceId = normalizeFaceId(PacketProtocol::fixedString(players[i].faceId, sizeof(players[i].faceId)));
                                     
                                     // Apply avatar colors to remote character if it exists
                                     if (remotePlayers.count(players[i].playerId) > 0) {
@@ -987,6 +1054,7 @@ int main() {
                                                         if (p.parentIndex == folderIndex && !p.deleted) {
                                                             if (p.name == "Head") {
                                                                 p.color = glm::vec3(players[i].headColor[0], players[i].headColor[1], players[i].headColor[2]);
+                                                                p.textureId = textureForFace(faceId);
                                                             } else if (p.name == "Torso") {
                                                                 p.color = glm::vec3(players[i].torsoColor[0], players[i].torsoColor[1], players[i].torsoColor[2]);
                                                             } else if (p.name == "LeftArm") {
@@ -1113,6 +1181,7 @@ int main() {
                                 
                                 // Immediately update character to position all parts correctly
                                 if (myCharacter) {
+                                    myCharacter->setFaceTexture(textureForFace(currentAvatar.faceId));
                                     myCharacter->update(0.0f, nullptr, false);
                                 }
                             }

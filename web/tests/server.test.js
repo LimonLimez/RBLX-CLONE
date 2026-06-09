@@ -150,18 +150,28 @@ test('avatar endpoints require auth, validate shape, and persist colors', async 
         }, token);
         assert.equal(invalidAvatar.response.status, 400);
 
+        const defaultLoad = await request(baseUrl, 'GET', '/api/avatar', undefined, token);
+        assert.equal(defaultLoad.response.status, 200);
+        assert.equal(defaultLoad.json.avatar.faceId, 'classic');
+
         const avatar = {
             headColor: [0.1, 0.2, 0.3],
             torsoColor: [0.4, 0.5, 0.6],
             leftArmColor: [0.7, 0.8, 0.9],
             rightArmColor: [0.2, 0.3, 0.4],
             leftLegColor: [0.5, 0.6, 0.7],
-            rightLegColor: [0.8, 0.9, 1.0]
+            rightLegColor: [0.8, 0.9, 1.0],
+            faceId: 'wink'
         };
 
         const save = await request(baseUrl, 'POST', '/api/avatar', { avatar }, token);
         assert.equal(save.response.status, 200);
         assert.equal(save.json.success, true);
+
+        const invalidFace = await request(baseUrl, 'POST', '/api/avatar', {
+            avatar: { ...avatar, faceId: '../bad-face' }
+        }, token);
+        assert.equal(invalidFace.response.status, 400);
 
         const load = await request(baseUrl, 'GET', '/api/avatar', undefined, token);
         assert.equal(load.response.status, 200);

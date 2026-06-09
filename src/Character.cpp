@@ -77,6 +77,13 @@ int Character::getFolderIndex() const {
     return root.parentIndex; // The folder is the parent of the root part
 }
 
+void Character::setFaceTexture(unsigned int textureId) {
+    if (!partsList || headIndex < 0 || headIndex >= static_cast<int>(partsList->size())) {
+        return;
+    }
+    (*partsList)[headIndex].textureId = textureId;
+}
+
 void Character::setRemoteState(glm::vec3 pos, float yaw, bool walking, bool jumping) {
     if (!isRemote) return;
     if (partsList && rootPartIndex >= 0 && rootPartIndex < partsList->size()) {

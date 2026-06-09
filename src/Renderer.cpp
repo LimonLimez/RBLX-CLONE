@@ -74,23 +74,24 @@ void Renderer::drawPart(const Part& part, const glm::mat4& view, const glm::mat4
     shader->setFloat("reflectance", part.reflectance);
     // Check if this is a head part (character head) or camera part
     bool isHeadPart = (part.name == "Head");
+    unsigned int activeFaceTexture = (isHeadPart && part.textureId > 0) ? part.textureId : faceTexture;
     shader->setFloat("isCamera", (part.isCamera || isHeadPart) ? 1.0f : 0.0f); // Pass isCamera/head flag
     shader->setInt("shadowMap", 1); // Shadow map texture unit 1
     
     // Set face texture for camera parts or head parts
-    if ((part.isCamera || isHeadPart) && faceTexture > 0) {
+    if ((part.isCamera || isHeadPart) && activeFaceTexture > 0) {
         shader->setFloat("hasTexture", 1.0f);
         shader->setInt("faceTexture", 2); // Texture unit 2
         glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, faceTexture);
+        glBindTexture(GL_TEXTURE_2D, activeFaceTexture);
         
         // Debug: Check if texture is valid
         GLint boundTexture = 0;
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTexture);
-        if (boundTexture != (GLint)faceTexture) {
+        if (boundTexture != (GLint)activeFaceTexture) {
             static bool warned = false;
             if (!warned) {
-                std::cerr << "WARNING: Face texture not bound correctly! Expected " << faceTexture 
+                std::cerr << "WARNING: Face texture not bound correctly! Expected " << activeFaceTexture
                           << " but got " << boundTexture << std::endl;
                 warned = true;
             }
@@ -120,9 +121,9 @@ void Renderer::drawPart(const Part& part, const glm::mat4& view, const glm::mat4
     glBindTexture(GL_TEXTURE_2D, shadowMap);
     
     // Rebind face texture if needed (ensure it's still bound)
-    if ((part.isCamera || isHeadPart) && faceTexture > 0) {
+    if ((part.isCamera || isHeadPart) && activeFaceTexture > 0) {
         glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, faceTexture);
+        glBindTexture(GL_TEXTURE_2D, activeFaceTexture);
     }
 
     // Enable blending only for transparent parts

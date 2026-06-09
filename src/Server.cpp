@@ -23,6 +23,8 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
+const char* DEFAULT_FACE_ID = "classic";
+
 struct ConnectedPlayer {
     SOCKET socket;
     int id;
@@ -40,6 +42,7 @@ struct ConnectedPlayer {
     glm::vec3 rightArmColor = glm::vec3(0.8f, 0.6f, 0.4f);
     glm::vec3 leftLegColor = glm::vec3(0.2f, 0.6f, 0.2f);
     glm::vec3 rightLegColor = glm::vec3(0.2f, 0.6f, 0.2f);
+    std::string faceId = DEFAULT_FACE_ID;
 };
 
 std::map<int, ConnectedPlayer> players;
@@ -92,6 +95,34 @@ bool parseAvatarColor(const std::string& avatarJson, const std::string& name, gl
     } catch (...) {
         return false;
     }
+}
+
+bool isKnownFaceId(const std::string& faceId) {
+    return faceId == "classic" ||
+           faceId == "happy" ||
+           faceId == "surprised" ||
+           faceId == "smirk" ||
+           faceId == "wink";
+}
+
+std::string normalizeFaceId(const std::string& faceId) {
+    return isKnownFaceId(faceId) ? faceId : DEFAULT_FACE_ID;
+}
+
+std::string parseAvatarFaceId(const std::string& avatarJson) {
+    size_t pos = avatarJson.find("\"faceId\"");
+    if (pos == std::string::npos) return DEFAULT_FACE_ID;
+
+    pos = avatarJson.find(":", pos);
+    if (pos == std::string::npos) return DEFAULT_FACE_ID;
+
+    pos = avatarJson.find("\"", pos);
+    if (pos == std::string::npos) return DEFAULT_FACE_ID;
+
+    size_t end = avatarJson.find("\"", pos + 1);
+    if (end == std::string::npos || end <= pos + 1) return DEFAULT_FACE_ID;
+
+    return normalizeFaceId(avatarJson.substr(pos + 1, end - pos - 1));
 }
 
 void copyFixedString(char* destination, size_t destinationSize, const std::string& value) {
@@ -166,6 +197,7 @@ std::vector<char> buildPlayerListPacket() {
             info.rightLegColor[0] = player.rightLegColor.r;
             info.rightLegColor[1] = player.rightLegColor.g;
             info.rightLegColor[2] = player.rightLegColor.b;
+            copyFixedString(info.faceId, sizeof(info.faceId), normalizeFaceId(player.faceId));
             playerInfoList.push_back(info);
         }
     }
@@ -420,6 +452,7 @@ int main() {
                         player.rightArmColor = glm::vec3(0.8f, 0.6f, 0.4f);
                         player.leftLegColor = glm::vec3(0.2f, 0.6f, 0.2f);
                         player.rightLegColor = glm::vec3(0.2f, 0.6f, 0.2f);
+                        player.faceId = DEFAULT_FACE_ID;
 
                         if (!isGuest) {
                             VerifiedUser verified = ServerAuth::verifyToken(token, WEB_SERVER_URL);
@@ -442,6 +475,7 @@ int main() {
                                 parseAvatarColor(avatarJson, "rightArmColor", player.rightArmColor);
                                 parseAvatarColor(avatarJson, "leftLegColor", player.leftLegColor);
                                 parseAvatarColor(avatarJson, "rightLegColor", player.rightLegColor);
+                                player.faceId = parseAvatarFaceId(avatarJson);
                             }
 
                             std::cout << "Player " << id << " joined as " << player.username << " (authenticated)" << std::endl;

@@ -17,6 +17,8 @@ const DEFAULT_AVATAR = Object.freeze({
     rightLegColor: [0.2, 0.6, 0.2]
 });
 
+const DEFAULT_FACE_ID = 'classic';
+const FACE_IDS = new Set(['classic', 'happy', 'surprised', 'smirk', 'wink']);
 const AVATAR_FIELDS = Object.keys(DEFAULT_AVATAR);
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
 const UNSAFE_DEV_SECRETS = new Set([
@@ -138,8 +140,14 @@ async function initializeDatabase(db) {
         right_leg_color_r REAL DEFAULT 0.2,
         right_leg_color_g REAL DEFAULT 0.6,
         right_leg_color_b REAL DEFAULT 0.2,
+        face_id TEXT DEFAULT 'classic',
         FOREIGN KEY (user_id) REFERENCES users(id)
     )`);
+
+    const avatarColumns = await dbAll(db, 'PRAGMA table_info(avatars)');
+    if (!avatarColumns.some((column) => column.name === 'face_id')) {
+        await dbRun(db, "ALTER TABLE avatars ADD COLUMN face_id TEXT DEFAULT 'classic'");
+    }
 
     await dbRun(db, `CREATE TABLE IF NOT EXISTS friendships (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -216,12 +224,21 @@ function sanitizeAvatar(avatar) {
         }
     }
 
+    if (avatar.faceId !== undefined && !FACE_IDS.has(avatar.faceId)) {
+        return null;
+    }
+    sanitized.faceId = avatar.faceId || DEFAULT_FACE_ID;
+
     return sanitized;
+}
+
+function normalizeFaceId(value) {
+    return FACE_IDS.has(value) ? value : DEFAULT_FACE_ID;
 }
 
 function rowToAvatar(row) {
     if (!row) {
-        return { ...DEFAULT_AVATAR };
+        return { ...DEFAULT_AVATAR, faceId: DEFAULT_FACE_ID };
     }
 
     return {
@@ -230,7 +247,8 @@ function rowToAvatar(row) {
         leftArmColor: [row.left_arm_color_r, row.left_arm_color_g, row.left_arm_color_b],
         rightArmColor: [row.right_arm_color_r, row.right_arm_color_g, row.right_arm_color_b],
         leftLegColor: [row.left_leg_color_r, row.left_leg_color_g, row.left_leg_color_b],
-        rightLegColor: [row.right_leg_color_r, row.right_leg_color_g, row.right_leg_color_b]
+        rightLegColor: [row.right_leg_color_r, row.right_leg_color_g, row.right_leg_color_b],
+        faceId: normalizeFaceId(row.face_id)
     };
 }
 
@@ -295,7 +313,7 @@ async function getPublicUser(db, userId, viewerId) {
     const row = await dbGet(db, `SELECT u.id, u.username, u.created_at,
             COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
             s.last_played_at,
-            a.user_id,
+            a.user_id, a.face_id,
             a.head_color_r, a.head_color_g, a.head_color_b,
             a.torso_color_r, a.torso_color_g, a.torso_color_b,
             a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
@@ -320,7 +338,7 @@ async function getFriends(db, userId, viewerId, limit = 24) {
     const rows = await dbAll(db, `SELECT u.id, u.username, u.created_at,
             COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
             s.last_played_at,
-            a.user_id,
+            a.user_id, a.face_id,
             a.head_color_r, a.head_color_g, a.head_color_b,
             a.torso_color_r, a.torso_color_g, a.torso_color_b,
             a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
@@ -351,7 +369,7 @@ async function getFriendRequests(db, userId, direction) {
     const rows = await dbAll(db, `SELECT u.id, u.username, u.created_at,
             COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
             s.last_played_at,
-            a.user_id,
+            a.user_id, a.face_id,
             a.head_color_r, a.head_color_g, a.head_color_b,
             a.torso_color_r, a.torso_color_g, a.torso_color_b,
             a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
@@ -624,7 +642,7 @@ function createApp(options = {}) {
                 ? await dbAll(db, `SELECT u.id, u.username, u.created_at,
                         COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
                         s.last_played_at,
-                        a.user_id,
+                        a.user_id, a.face_id,
                         a.head_color_r, a.head_color_g, a.head_color_b,
                         a.torso_color_r, a.torso_color_g, a.torso_color_b,
                         a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
@@ -647,7 +665,7 @@ function createApp(options = {}) {
                 : await dbAll(db, `SELECT u.id, u.username, u.created_at,
                         COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
                         s.last_played_at,
-                        a.user_id,
+                        a.user_id, a.face_id,
                         a.head_color_r, a.head_color_g, a.head_color_b,
                         a.torso_color_r, a.torso_color_g, a.torso_color_b,
                         a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
@@ -837,7 +855,8 @@ function createApp(options = {}) {
                 avatar.leftArmColor[0], avatar.leftArmColor[1], avatar.leftArmColor[2],
                 avatar.rightArmColor[0], avatar.rightArmColor[1], avatar.rightArmColor[2],
                 avatar.leftLegColor[0], avatar.leftLegColor[1], avatar.leftLegColor[2],
-                avatar.rightLegColor[0], avatar.rightLegColor[1], avatar.rightLegColor[2]
+                avatar.rightLegColor[0], avatar.rightLegColor[1], avatar.rightLegColor[2],
+                avatar.faceId
             ];
 
             await dbRun(db, `INSERT INTO avatars (
@@ -847,8 +866,9 @@ function createApp(options = {}) {
                     left_arm_color_r, left_arm_color_g, left_arm_color_b,
                     right_arm_color_r, right_arm_color_g, right_arm_color_b,
                     left_leg_color_r, left_leg_color_g, left_leg_color_b,
-                    right_leg_color_r, right_leg_color_g, right_leg_color_b
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    right_leg_color_r, right_leg_color_g, right_leg_color_b,
+                    face_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     head_color_r = excluded.head_color_r,
                     head_color_g = excluded.head_color_g,
@@ -867,7 +887,8 @@ function createApp(options = {}) {
                     left_leg_color_b = excluded.left_leg_color_b,
                     right_leg_color_r = excluded.right_leg_color_r,
                     right_leg_color_g = excluded.right_leg_color_g,
-                    right_leg_color_b = excluded.right_leg_color_b`, values);
+                    right_leg_color_b = excluded.right_leg_color_b,
+                    face_id = excluded.face_id`, values);
 
             res.json({ success: true });
         } catch (error) {

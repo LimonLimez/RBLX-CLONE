@@ -1,5 +1,21 @@
 const tokenKey = 'authToken';
-const faceTextureUrl = '/face.png';
+const faceCatalog = [
+    { id: 'classic', label: 'Classic', src: '/faces/classic.png' },
+    { id: 'happy', label: 'Happy', src: '/faces/happy.png' },
+    { id: 'surprised', label: 'Surprised', src: '/faces/surprised.png' },
+    { id: 'smirk', label: 'Smirk', src: '/faces/smirk.png' },
+    { id: 'wink', label: 'Wink', src: '/faces/wink.png' }
+];
+const defaultFaceId = 'classic';
+
+function faceSrc(faceId) {
+    return faceCatalog.find((face) => face.id === faceId)?.src || faceCatalog[0].src;
+}
+
+function normalizeAvatar(avatar) {
+    const faceId = faceCatalog.some((face) => face.id === avatar?.faceId) ? avatar.faceId : defaultFaceId;
+    return { ...defaultAvatar, ...(avatar || {}), faceId };
+}
 
 function getToken() {
     return localStorage.getItem(tokenKey);
@@ -95,17 +111,18 @@ function profileHref(user) {
 }
 
 function createMiniAvatar(avatar) {
+    const safeAvatar = normalizeAvatar(avatar);
     const figure = document.createElement('div');
     figure.className = 'mini-avatar';
     figure.setAttribute('aria-hidden', 'true');
 
     const parts = [
-        ['mini-head', avatar.headColor],
-        ['mini-torso', avatar.torsoColor],
-        ['mini-left-arm', avatar.leftArmColor],
-        ['mini-right-arm', avatar.rightArmColor],
-        ['mini-left-leg', avatar.leftLegColor],
-        ['mini-right-leg', avatar.rightLegColor]
+        ['mini-head', safeAvatar.headColor],
+        ['mini-torso', safeAvatar.torsoColor],
+        ['mini-left-arm', safeAvatar.leftArmColor],
+        ['mini-right-arm', safeAvatar.rightArmColor],
+        ['mini-left-leg', safeAvatar.leftLegColor],
+        ['mini-right-leg', safeAvatar.rightLegColor]
     ];
 
     for (const [className, color] of parts) {
@@ -114,7 +131,7 @@ function createMiniAvatar(avatar) {
         part.style.background = colorToCss(color);
         if (className === 'mini-head') {
             const face = document.createElement('img');
-            face.src = faceTextureUrl;
+            face.src = faceSrc(safeAvatar.faceId);
             face.alt = '';
             face.decoding = 'async';
             part.appendChild(face);
@@ -243,7 +260,7 @@ function createUserCard(user, onChanged) {
     avatarLink.className = 'user-avatar-link';
     avatarLink.href = profileHref(user);
     avatarLink.setAttribute('aria-label', `${user.username} profile`);
-    avatarLink.appendChild(createMiniAvatar(user.avatar || defaultAvatar));
+    avatarLink.appendChild(createMiniAvatar(normalizeAvatar(user.avatar)));
 
     const content = document.createElement('div');
     content.className = 'user-card-content';
@@ -463,7 +480,7 @@ function initDashboard() {
                     profileSummary.innerHTML = '';
                     const profile = document.createElement('div');
                     profile.className = 'profile-summary';
-                    profile.appendChild(createMiniAvatar(data.profile.avatar || defaultAvatar));
+                    profile.appendChild(createMiniAvatar(normalizeAvatar(data.profile.avatar)));
 
                     const text = document.createElement('div');
                     const name = document.createElement('h2');
@@ -598,7 +615,7 @@ function initProfilePage() {
                 previewPromise = createAvatarPreview(avatar, () => {});
             }
             const preview = await previewPromise;
-            preview.update(profile.avatar || defaultAvatar, '');
+            preview.update(normalizeAvatar(profile.avatar), '');
         }
 
         renderUserList(
@@ -655,7 +672,8 @@ const defaultAvatar = {
     leftArmColor: [0.8, 0.6, 0.4],
     rightArmColor: [0.8, 0.6, 0.4],
     leftLegColor: [0.2, 0.6, 0.2],
-    rightLegColor: [0.2, 0.6, 0.2]
+    rightLegColor: [0.2, 0.6, 0.2],
+    faceId: defaultFaceId
 };
 
 const avatarBlocks = [
@@ -693,10 +711,16 @@ async function createAvatarPreview(container, onSelect) {
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const meshes = new Map();
-    const faceTexture = await new THREE.TextureLoader().loadAsync(faceTextureUrl).catch(() => null);
-    if (faceTexture) {
-        faceTexture.colorSpace = THREE.SRGBColorSpace;
-    }
+    const loader = new THREE.TextureLoader();
+    const faceTextures = new Map();
+    await Promise.all(faceCatalog.map(async (face) => {
+        const texture = await loader.loadAsync(face.src).catch(() => null);
+        if (texture) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            faceTextures.set(face.id, texture);
+        }
+    }));
+    let faceMesh = null;
 
     renderer.setClearColor(0xffffff, 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -704,7 +728,7 @@ async function createAvatarPreview(container, onSelect) {
     renderer.domElement.className = 'avatar-canvas';
     renderer.domElement.setAttribute('aria-label', 'Drag to rotate avatar preview');
     renderer.domElement.setAttribute('role', 'img');
-    renderer.domElement.dataset.faceTexture = faceTexture ? 'loaded' : 'missing';
+    renderer.domElement.dataset.faceTexture = faceTextures.size > 0 ? 'loaded' : 'missing';
 
     scene.background = new THREE.Color(0xffffff);
     scene.add(root);
@@ -725,18 +749,18 @@ async function createAvatarPreview(container, onSelect) {
         mesh.userData.edge = edge;
         mesh.add(edge);
 
-        if (block.id === 'head' && faceTexture) {
-            const face = new THREE.Mesh(
+        if (block.id === 'head' && faceTextures.size > 0) {
+            faceMesh = new THREE.Mesh(
                 new THREE.PlaneGeometry(block.size[0] * 0.82, block.size[1] * 0.82),
                 new THREE.MeshBasicMaterial({
-                    map: faceTexture,
+                    map: faceTextures.get(defaultFaceId),
                     transparent: true,
                     alphaTest: 0.08,
                     depthWrite: false
                 })
             );
-            face.position.set(0, 0, block.size[2] * 0.5 + 0.012);
-            mesh.add(face);
+            faceMesh.position.set(0, 0, block.size[2] * 0.5 + 0.012);
+            mesh.add(faceMesh);
         }
 
         root.add(mesh);
@@ -801,9 +825,15 @@ async function createAvatarPreview(container, onSelect) {
     }
 
     function update(avatar, selected) {
+        const safeAvatar = normalizeAvatar(avatar);
         for (const block of avatarBlocks) {
             const mesh = meshes.get(block.id);
-            mesh.material.color.setRGB(...threeColor(avatar[block.key]));
+            mesh.material.color.setRGB(...threeColor(safeAvatar[block.key]));
+        }
+        if (faceMesh) {
+            faceMesh.material.map = faceTextures.get(safeAvatar.faceId) || faceTextures.get(defaultFaceId);
+            faceMesh.material.needsUpdate = true;
+            renderer.domElement.dataset.faceId = safeAvatar.faceId;
         }
         render();
     }
@@ -913,12 +943,13 @@ function initAvatar() {
         return;
     }
 
-    let avatar = { ...defaultAvatar };
+    let avatar = normalizeAvatar();
     let selected = 'head';
     const figure = document.querySelector('[data-avatar-figure]');
     const tabs = document.querySelector('[data-part-tabs]');
     const colorPicker = document.querySelector('[data-color-picker]');
     const colorCode = document.querySelector('[data-color-code]');
+    const faceOptions = document.querySelector('[data-face-options]');
     const status = document.querySelector('[data-status]');
     let preview = null;
 
@@ -934,6 +965,29 @@ function initAvatar() {
 
     function syncPreview() {
         if (preview) preview.update(avatar, selected);
+    }
+
+    function drawFaceOptions() {
+        if (!faceOptions) return;
+        faceOptions.innerHTML = '';
+        for (const face of faceCatalog) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `face-option${avatar.faceId === face.id ? ' active' : ''}`;
+            button.setAttribute('aria-pressed', avatar.faceId === face.id ? 'true' : 'false');
+            button.addEventListener('click', () => selectFace(face.id));
+
+            const image = document.createElement('img');
+            image.src = face.src;
+            image.alt = '';
+            image.decoding = 'async';
+
+            const label = document.createElement('span');
+            label.textContent = face.label;
+
+            button.append(image, label);
+            faceOptions.appendChild(button);
+        }
     }
 
     function drawTabs() {
@@ -955,6 +1009,12 @@ function initAvatar() {
         syncPreview();
     }
 
+    function selectFace(faceId) {
+        avatar.faceId = faceCatalog.some((face) => face.id === faceId) ? faceId : defaultFaceId;
+        drawFaceOptions();
+        syncPreview();
+    }
+
     function updateSelectedColor() {
         avatar[selectedKey()] = hexToColor(colorPicker.value);
         syncColorPicker();
@@ -966,6 +1026,7 @@ function initAvatar() {
     createAvatarPreview(figure, selectPart)
         .then((createdPreview) => {
             preview = createdPreview;
+            drawFaceOptions();
             syncPreview();
         })
         .catch(() => {
@@ -993,10 +1054,12 @@ function initAvatar() {
     fetch('/api/avatar', { headers: { Authorization: `Bearer ${token}` } })
         .then((response) => response.json())
         .then((data) => {
-            if (data.success && data.avatar) avatar = data.avatar;
+            if (data.success && data.avatar) avatar = normalizeAvatar(data.avatar);
+            drawFaceOptions();
             selectPart('head');
         })
         .catch(() => {
+            drawFaceOptions();
             selectPart('head');
             setStatus(status, 'Using local defaults until the server responds.', 'error');
         });

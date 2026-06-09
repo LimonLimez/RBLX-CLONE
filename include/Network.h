@@ -73,6 +73,7 @@ struct PlayerInfo {
     float rightArmColor[3];
     float leftLegColor[3];
     float rightLegColor[3];
+    char faceId[16];
 };
 
 // 6. World Update (Server -> Client)
