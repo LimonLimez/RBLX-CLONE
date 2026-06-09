@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - RBLX Clone</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page" data-profile-page>
+        <header class="topbar">
+            <a class="brand" href="/dashboard">
+                <span>RBLX Clone</span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <a href="/dashboard">Home</a>
+                <a href="/search">Search</a>
+                <a href="/avatar">Avatar</a>
+                <button class="button danger" type="button" data-logout>Logout</button>
+            </nav>
+        </header>
+
+        <main id="main">
+            <div class="dashboard-head">
+                <div>
+                    <p class="label" data-profile-label>Profile</p>
+                    <h1 class="page-title" data-profile-title>Profile</h1>
+                </div>
+                <div data-profile-actions></div>
+            </div>
+
+            <div class="status" data-profile-status aria-live="polite"></div>
+
+            <section class="profile-layout">
+                <article class="panel profile-avatar-panel">
+                    <h2>Avatar</h2>
+                    <div class="avatar-stage profile-stage">
+                        <div class="avatar-figure" data-profile-avatar aria-label="Profile avatar preview"></div>
+                    </div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Stats</p>
+                            <h2>Player info</h2>
+                        </div>
+                    </div>
+                    <div class="stats-grid" data-profile-stats></div>
+                </article>
+
+                <article class="panel profile-friends-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Friends</p>
+                            <h2>Friends</h2>
+                        </div>
+                    </div>
+                    <div class="user-grid" data-profile-friends></div>
+                </article>
+            </section>
+        </main>
+    </div>
+    <script src="/app.js?v=social-1" defer></script>
+</body>
+</html>

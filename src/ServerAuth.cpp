@@ -184,3 +184,13 @@ std::string ServerAuth::getAvatar(const std::string& token, const std::string& s
     if (token.empty()) return "";
     return httpRequest("GET", serverUrl, L"/api/avatar", "", token);
 }
+
+bool ServerAuth::recordPlaytime(const std::string& token, int seconds, const std::string& serverUrl) {
+    if (token.empty() || seconds <= 0) return false;
+
+    std::ostringstream body;
+    body << "{\"seconds\":" << seconds << "}";
+
+    const std::string response = httpRequest("POST", serverUrl, L"/api/me/playtime", body.str(), token);
+    return !response.empty() && jsonBoolTrue(response, "success");
+}

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search - RBLX Clone</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page" data-search-page>
+        <header class="topbar">
+            <a class="brand" href="/dashboard">
+                <span>RBLX Clone</span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <a href="/dashboard">Home</a>
+                <a href="/profile">Profile</a>
+                <a href="/avatar">Avatar</a>
+                <button class="button danger" type="button" data-logout>Logout</button>
+            </nav>
+        </header>
+
+        <main id="main">
+            <div class="dashboard-head">
+                <div>
+                    <p class="label">People</p>
+                    <h1 class="page-title">Search</h1>
+                </div>
+            </div>
+
+            <section class="search-layout">
+                <form class="panel search-panel" data-search-form>
+                    <label class="field" for="people-search">
+                        <span>Username or user ID</span>
+                        <input class="input" id="people-search" name="q" type="search" autocomplete="off" data-search-input>
+                    </label>
+                    <button class="button" type="submit">Search people</button>
+                    <div class="status" data-search-status aria-live="polite"></div>
+                </form>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Results</p>
+                            <h2>Players</h2>
+                        </div>
+                    </div>
+                    <div class="user-grid" data-search-results></div>
+                </section>
+            </section>
+        </main>
+    </div>
+    <script src="/app.js?v=social-1" defer></script>
+</body>
+</html>

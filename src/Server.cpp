@@ -29,6 +29,9 @@ struct ConnectedPlayer {
     char username[32];
     PacketPlayerState state;
     bool active;
+    int userId = -1;
+    std::string authToken;
+    std::chrono::steady_clock::time_point sessionStartedAt;
     std::vector<char> receiveBuffer; // Buffer for sticky packets
     rp3d::RigidBody* shadowBody; // Server-side physics body for player
     glm::vec3 headColor = glm::vec3(0.8f, 0.6f, 0.4f);
@@ -347,6 +350,7 @@ int main() {
             newPlayer.socket = clientSocket;
             newPlayer.id = nextPlayerId++;
             newPlayer.active = false;
+            newPlayer.userId = -1;
             newPlayer.shadowBody = nullptr; // Init to null
             memset(newPlayer.username, 0, 32);
 
@@ -399,6 +403,9 @@ int main() {
                                 break;
                             }
 
+                            player.userId = verified.userId;
+                            player.authToken = token;
+                            player.sessionStartedAt = std::chrono::steady_clock::now();
                             copyFixedString(player.username, sizeof(player.username), verified.username);
 
                             std::string avatarJson = ServerAuth::getAvatar(token, WEB_SERVER_URL);
@@ -413,6 +420,8 @@ int main() {
 
                             std::cout << "Player " << id << " joined as " << player.username << " (authenticated)" << std::endl;
                         } else {
+                            player.userId = -1;
+                            player.authToken.clear();
                             int guestNumber = (rand() % 9999) + 1;
                             snprintf(player.username, sizeof(player.username), "guest_%d", guestNumber);
                             std::cout << "Player " << id << " joined as " << player.username << " (guest)" << std::endl;
@@ -553,6 +562,17 @@ int main() {
             }
 
             if (players[id].active) {
+                if (players[id].userId > 0 && !players[id].authToken.empty()) {
+                    const auto now = std::chrono::steady_clock::now();
+                    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                        now - players[id].sessionStartedAt
+                    ).count();
+                    const int playtimeSeconds = std::max(1, static_cast<int>(elapsed));
+                    if (!ServerAuth::recordPlaytime(players[id].authToken, playtimeSeconds, WEB_SERVER_URL)) {
+                        std::cerr << "Could not record playtime for player " << id << std::endl;
+                    }
+                }
+
                 players[id].active = false;
                 PacketPlayerLeave leavePkt = { id };
                 broadcastPacket(PacketProtocol::buildStructPacket(PacketType::PLAYER_LEAVE, leavePkt), id);

@@ -98,6 +98,18 @@ function dbGet(db, sql, params = []) {
     });
 }
 
+function dbAll(db, sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve(rows);
+        });
+    });
+}
+
 async function initializeDatabase(db) {
     await dbRun(db, `CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,6 +138,27 @@ async function initializeDatabase(db) {
         right_leg_color_r REAL DEFAULT 0.2,
         right_leg_color_g REAL DEFAULT 0.6,
         right_leg_color_b REAL DEFAULT 0.2,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )`);
+
+    await dbRun(db, `CREATE TABLE IF NOT EXISTS friendships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        requester_id INTEGER NOT NULL,
+        addressee_id INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'accepted')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(requester_id, addressee_id),
+        CHECK(requester_id <> addressee_id),
+        FOREIGN KEY (requester_id) REFERENCES users(id),
+        FOREIGN KEY (addressee_id) REFERENCES users(id)
+    )`);
+
+    await dbRun(db, `CREATE TABLE IF NOT EXISTS user_stats (
+        user_id INTEGER PRIMARY KEY,
+        playtime_seconds INTEGER NOT NULL DEFAULT 0,
+        last_played_at DATETIME,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
     )`);
 }
@@ -199,6 +232,145 @@ function rowToAvatar(row) {
         leftLegColor: [row.left_leg_color_r, row.left_leg_color_g, row.left_leg_color_b],
         rightLegColor: [row.right_leg_color_r, row.right_leg_color_g, row.right_leg_color_b]
     };
+}
+
+function parseUserId(value) {
+    const userId = Number.parseInt(value, 10);
+    return Number.isInteger(userId) && userId > 0 ? userId : 0;
+}
+
+function clampPlaytimeSeconds(value) {
+    const seconds = Number.parseInt(value, 10);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+    return Math.min(seconds, 24 * 60 * 60);
+}
+
+function escapeLike(value) {
+    return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+function serializePublicUser(row, relationship = 'none', friendCount = 0) {
+    return {
+        id: row.id,
+        username: row.username,
+        createdAt: row.created_at,
+        avatar: rowToAvatar(row.user_id ? row : null),
+        stats: {
+            playtimeSeconds: Number(row.playtime_seconds || 0),
+            lastPlayedAt: row.last_played_at || null
+        },
+        friendCount,
+        relationship
+    };
+}
+
+async function getFriendCount(db, userId) {
+    const row = await dbGet(db, `SELECT COUNT(*) AS count
+        FROM friendships
+        WHERE status = 'accepted'
+          AND (requester_id = ? OR addressee_id = ?)`, [userId, userId]);
+    return Number(row && row.count ? row.count : 0);
+}
+
+async function getFriendship(db, firstUserId, secondUserId) {
+    return dbGet(db, `SELECT *
+        FROM friendships
+        WHERE (requester_id = ? AND addressee_id = ?)
+           OR (requester_id = ? AND addressee_id = ?)`, [
+        firstUserId,
+        secondUserId,
+        secondUserId,
+        firstUserId
+    ]);
+}
+
+function relationshipFor(viewerId, userId, friendship) {
+    if (viewerId === userId) return 'self';
+    if (!friendship) return 'none';
+    if (friendship.status === 'accepted') return 'friends';
+    return friendship.requester_id === viewerId ? 'outgoing' : 'incoming';
+}
+
+async function getPublicUser(db, userId, viewerId) {
+    const row = await dbGet(db, `SELECT u.id, u.username, u.created_at,
+            COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
+            s.last_played_at,
+            a.user_id,
+            a.head_color_r, a.head_color_g, a.head_color_b,
+            a.torso_color_r, a.torso_color_g, a.torso_color_b,
+            a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
+            a.right_arm_color_r, a.right_arm_color_g, a.right_arm_color_b,
+            a.left_leg_color_r, a.left_leg_color_g, a.left_leg_color_b,
+            a.right_leg_color_r, a.right_leg_color_g, a.right_leg_color_b
+        FROM users u
+        LEFT JOIN avatars a ON a.user_id = u.id
+        LEFT JOIN user_stats s ON s.user_id = u.id
+        WHERE u.id = ?`, [userId]);
+
+    if (!row) return null;
+
+    const [friendCount, friendship] = await Promise.all([
+        getFriendCount(db, userId),
+        viewerId ? getFriendship(db, viewerId, userId) : Promise.resolve(null)
+    ]);
+    return serializePublicUser(row, relationshipFor(viewerId, userId, friendship), friendCount);
+}
+
+async function getFriends(db, userId, viewerId, limit = 24) {
+    const rows = await dbAll(db, `SELECT u.id, u.username, u.created_at,
+            COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
+            s.last_played_at,
+            a.user_id,
+            a.head_color_r, a.head_color_g, a.head_color_b,
+            a.torso_color_r, a.torso_color_g, a.torso_color_b,
+            a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
+            a.right_arm_color_r, a.right_arm_color_g, a.right_arm_color_b,
+            a.left_leg_color_r, a.left_leg_color_g, a.left_leg_color_b,
+            a.right_leg_color_r, a.right_leg_color_g, a.right_leg_color_b
+        FROM friendships f
+        JOIN users u ON u.id = CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END
+        LEFT JOIN avatars a ON a.user_id = u.id
+        LEFT JOIN user_stats s ON s.user_id = u.id
+        WHERE f.status = 'accepted'
+          AND (f.requester_id = ? OR f.addressee_id = ?)
+        ORDER BY lower(u.username)
+        LIMIT ?`, [userId, userId, userId, limit]);
+
+    return Promise.all(rows.map(async (row) => {
+        const [friendCount, friendship] = await Promise.all([
+            getFriendCount(db, row.id),
+            viewerId ? getFriendship(db, viewerId, row.id) : Promise.resolve(null)
+        ]);
+        return serializePublicUser(row, relationshipFor(viewerId, row.id, friendship), friendCount);
+    }));
+}
+
+async function getFriendRequests(db, userId, direction) {
+    const column = direction === 'incoming' ? 'addressee_id' : 'requester_id';
+    const otherColumn = direction === 'incoming' ? 'requester_id' : 'addressee_id';
+    const rows = await dbAll(db, `SELECT u.id, u.username, u.created_at,
+            COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
+            s.last_played_at,
+            a.user_id,
+            a.head_color_r, a.head_color_g, a.head_color_b,
+            a.torso_color_r, a.torso_color_g, a.torso_color_b,
+            a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
+            a.right_arm_color_r, a.right_arm_color_g, a.right_arm_color_b,
+            a.left_leg_color_r, a.left_leg_color_g, a.left_leg_color_b,
+            a.right_leg_color_r, a.right_leg_color_g, a.right_leg_color_b
+        FROM friendships f
+        JOIN users u ON u.id = f.${otherColumn}
+        LEFT JOIN avatars a ON a.user_id = u.id
+        LEFT JOIN user_stats s ON s.user_id = u.id
+        WHERE f.status = 'pending'
+          AND f.${column} = ?
+        ORDER BY f.created_at DESC
+        LIMIT 24`, [userId]);
+
+    return Promise.all(rows.map(async (row) => {
+        const friendCount = await getFriendCount(db, row.id);
+        return serializePublicUser(row, direction, friendCount);
+    }));
 }
 
 function extractBearerToken(req) {
@@ -401,6 +573,243 @@ function createApp(options = {}) {
         }
     });
 
+    app.get('/api/me/social', authenticate, async (req, res, next) => {
+        try {
+            const [profile, friends, incomingRequests, outgoingRequests] = await Promise.all([
+                getPublicUser(db, req.user.id, req.user.id),
+                getFriends(db, req.user.id, req.user.id, 48),
+                getFriendRequests(db, req.user.id, 'incoming'),
+                getFriendRequests(db, req.user.id, 'outgoing')
+            ]);
+
+            res.json({
+                success: true,
+                profile,
+                friends,
+                incomingRequests,
+                outgoingRequests
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.post('/api/me/playtime', authenticate, async (req, res, next) => {
+        try {
+            const seconds = clampPlaytimeSeconds(req.body && req.body.seconds);
+            if (!seconds) {
+                res.status(400).json({ error: 'Playtime seconds must be a positive number.' });
+                return;
+            }
+
+            await dbRun(db, `INSERT INTO user_stats (user_id, playtime_seconds, last_played_at, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        playtime_seconds = playtime_seconds + excluded.playtime_seconds,
+                        last_played_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP`, [req.user.id, seconds]);
+
+            const profile = await getPublicUser(db, req.user.id, req.user.id);
+            res.json({ success: true, profile });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.get('/api/users/search', authenticate, async (req, res, next) => {
+        try {
+            const query = String(req.query.q || '').trim().slice(0, 30);
+            const limit = 12;
+            const rows = query
+                ? await dbAll(db, `SELECT u.id, u.username, u.created_at,
+                        COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
+                        s.last_played_at,
+                        a.user_id,
+                        a.head_color_r, a.head_color_g, a.head_color_b,
+                        a.torso_color_r, a.torso_color_g, a.torso_color_b,
+                        a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
+                        a.right_arm_color_r, a.right_arm_color_g, a.right_arm_color_b,
+                        a.left_leg_color_r, a.left_leg_color_g, a.left_leg_color_b,
+                        a.right_leg_color_r, a.right_leg_color_g, a.right_leg_color_b
+                    FROM users u
+                    LEFT JOIN avatars a ON a.user_id = u.id
+                    LEFT JOIN user_stats s ON s.user_id = u.id
+                    WHERE u.id = ?
+                       OR lower(u.username) LIKE ? ESCAPE '\\'
+                    ORDER BY CASE WHEN lower(u.username) = lower(?) THEN 0 ELSE 1 END,
+                             lower(u.username)
+                    LIMIT ?`, [
+                    parseUserId(query),
+                    `%${escapeLike(query.toLowerCase())}%`,
+                    query,
+                    limit
+                ])
+                : await dbAll(db, `SELECT u.id, u.username, u.created_at,
+                        COALESCE(s.playtime_seconds, 0) AS playtime_seconds,
+                        s.last_played_at,
+                        a.user_id,
+                        a.head_color_r, a.head_color_g, a.head_color_b,
+                        a.torso_color_r, a.torso_color_g, a.torso_color_b,
+                        a.left_arm_color_r, a.left_arm_color_g, a.left_arm_color_b,
+                        a.right_arm_color_r, a.right_arm_color_g, a.right_arm_color_b,
+                        a.left_leg_color_r, a.left_leg_color_g, a.left_leg_color_b,
+                        a.right_leg_color_r, a.right_leg_color_g, a.right_leg_color_b
+                    FROM users u
+                    LEFT JOIN avatars a ON a.user_id = u.id
+                    LEFT JOIN user_stats s ON s.user_id = u.id
+                    ORDER BY u.id DESC
+                    LIMIT ?`, [limit]);
+
+            const users = await Promise.all(rows
+                .filter((row) => row.id !== req.user.id)
+                .map(async (row) => {
+                    const [friendCount, friendship] = await Promise.all([
+                        getFriendCount(db, row.id),
+                        getFriendship(db, req.user.id, row.id)
+                    ]);
+                    return serializePublicUser(row, relationshipFor(req.user.id, row.id, friendship), friendCount);
+                }));
+
+            res.json({ success: true, query, users });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.get('/api/users/:id', authenticate, async (req, res, next) => {
+        try {
+            const userId = parseUserId(req.params.id);
+            if (!userId) {
+                res.status(400).json({ error: 'User ID must be a positive number.' });
+                return;
+            }
+
+            const profile = await getPublicUser(db, userId, req.user.id);
+            if (!profile) {
+                res.status(404).json({ error: 'User not found.' });
+                return;
+            }
+
+            const friends = await getFriends(db, userId, req.user.id, 24);
+            res.json({ success: true, profile, friends });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.post('/api/friends/request', authenticate, async (req, res, next) => {
+        try {
+            const targetUserId = parseUserId(req.body && req.body.userId);
+            if (!targetUserId || targetUserId === req.user.id) {
+                res.status(400).json({ error: 'Choose another user to add as a friend.' });
+                return;
+            }
+
+            const targetUser = await dbGet(db, 'SELECT id FROM users WHERE id = ?', [targetUserId]);
+            if (!targetUser) {
+                res.status(404).json({ error: 'User not found.' });
+                return;
+            }
+
+            const existing = await getFriendship(db, req.user.id, targetUserId);
+            if (existing && existing.status === 'accepted') {
+                res.status(409).json({ error: 'You are already friends.' });
+                return;
+            }
+
+            if (existing && existing.requester_id === req.user.id) {
+                const profile = await getPublicUser(db, targetUserId, req.user.id);
+                res.json({ success: true, relationship: 'outgoing', profile });
+                return;
+            }
+
+            if (existing && existing.addressee_id === req.user.id) {
+                await dbRun(db, `UPDATE friendships
+                    SET status = 'accepted', updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?`, [existing.id]);
+                const profile = await getPublicUser(db, targetUserId, req.user.id);
+                res.json({ success: true, relationship: 'friends', profile });
+                return;
+            }
+
+            await dbRun(db, `INSERT INTO friendships (requester_id, addressee_id, status)
+                VALUES (?, ?, 'pending')`, [req.user.id, targetUserId]);
+            const profile = await getPublicUser(db, targetUserId, req.user.id);
+            res.status(201).json({ success: true, relationship: 'outgoing', profile });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.post('/api/friends/respond', authenticate, async (req, res, next) => {
+        try {
+            const requesterId = parseUserId(req.body && req.body.userId);
+            const action = String(req.body && req.body.action || '').toLowerCase();
+            if (!requesterId || !['accept', 'decline'].includes(action)) {
+                res.status(400).json({ error: 'Friend response requires a requester and action.' });
+                return;
+            }
+
+            const existing = await dbGet(db, `SELECT *
+                FROM friendships
+                WHERE requester_id = ?
+                  AND addressee_id = ?
+                  AND status = 'pending'`, [requesterId, req.user.id]);
+
+            if (!existing) {
+                res.status(404).json({ error: 'Friend request not found.' });
+                return;
+            }
+
+            if (action === 'accept') {
+                await dbRun(db, `UPDATE friendships
+                    SET status = 'accepted', updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?`, [existing.id]);
+            } else {
+                await dbRun(db, 'DELETE FROM friendships WHERE id = ?', [existing.id]);
+            }
+
+            const profile = await getPublicUser(db, requesterId, req.user.id);
+            res.json({
+                success: true,
+                relationship: action === 'accept' ? 'friends' : 'none',
+                profile
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.post('/api/friends/remove', authenticate, async (req, res, next) => {
+        try {
+            const targetUserId = parseUserId(req.body && req.body.userId);
+            if (!targetUserId || targetUserId === req.user.id) {
+                res.status(400).json({ error: 'Choose another user.' });
+                return;
+            }
+
+            const targetUser = await dbGet(db, 'SELECT id FROM users WHERE id = ?', [targetUserId]);
+            if (!targetUser) {
+                res.status(404).json({ error: 'User not found.' });
+                return;
+            }
+
+            await dbRun(db, `DELETE FROM friendships
+                WHERE (requester_id = ? AND addressee_id = ?)
+                   OR (requester_id = ? AND addressee_id = ?)`, [
+                req.user.id,
+                targetUserId,
+                targetUserId,
+                req.user.id
+            ]);
+
+            const profile = await getPublicUser(db, targetUserId, req.user.id);
+            res.json({ success: true, relationship: 'none', profile });
+        } catch (error) {
+            next(error);
+        }
+    });
+
     app.get('/api/avatar', authenticate, async (req, res, next) => {
         try {
             const row = await dbGet(db, 'SELECT * FROM avatars WHERE user_id = ?', [req.user.id]);
@@ -484,6 +893,14 @@ function createApp(options = {}) {
 
     app.get('/avatar', (req, res) => {
         res.sendFile(path.join(__dirname, 'public', 'avatar.html'));
+    });
+
+    app.get('/search', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'search.html'));
+    });
+
+    app.get(['/profile', '/profile/:id'], (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'profile.html'));
     });
 
     app.use((err, req, res, next) => {

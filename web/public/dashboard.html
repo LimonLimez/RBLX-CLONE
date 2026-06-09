@@ -10,11 +10,12 @@
     <a class="skip-link" href="#main">Skip to content</a>
     <div class="page" data-dashboard>
         <header class="topbar">
-            <a class="brand" href="/">
+            <a class="brand" href="/dashboard">
                 <span>RBLX Clone</span>
             </a>
             <nav class="nav" aria-label="Primary">
-                <a href="/dashboard">Profile</a>
+                <a href="/profile">Profile</a>
+                <a href="/search">Search</a>
                 <a href="/avatar">Avatar</a>
                 <button class="button danger" type="button" data-logout>Logout</button>
             </nav>
@@ -26,9 +27,43 @@
                     <p class="label">Dashboard</p>
                     <h1 class="page-title" data-welcome-heading>Welcome</h1>
                 </div>
+                <a class="button" href="/search">Find people</a>
             </div>
+
+            <div class="status" data-dashboard-status aria-live="polite"></div>
+
+            <section class="dashboard-grid social-dashboard">
+                <article class="panel profile-overview">
+                    <p class="label">Profile</p>
+                    <div data-profile-summary></div>
+                </article>
+
+                <article class="panel friends-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Friends</p>
+                            <h2>Your friends</h2>
+                        </div>
+                        <a class="button secondary small" href="/search">Search</a>
+                    </div>
+                    <div class="user-grid" data-friends-list></div>
+                </article>
+
+                <article class="panel requests-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="label">Requests</p>
+                            <h2>Friend requests</h2>
+                        </div>
+                    </div>
+                    <h3>Incoming</h3>
+                    <div class="stack-list" data-incoming-requests></div>
+                    <h3>Sent</h3>
+                    <div class="stack-list" data-outgoing-requests></div>
+                </article>
+            </section>
         </main>
     </div>
-    <script src="/app.js?v=3d-preview-2" defer></script>
+    <script src="/app.js?v=social-1" defer></script>
 </body>
 </html>

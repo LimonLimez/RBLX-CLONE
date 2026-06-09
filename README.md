@@ -127,6 +127,16 @@ Avatar:
 - `GET /api/avatar` with `Authorization: Bearer <token>`
 - `POST /api/avatar` with `Authorization: Bearer <token>` and JSON `{ "avatar": { ...six RGB arrays... } }`
 
+Profiles and friends:
+
+- `GET /api/me/social` returns the signed-in profile, friends, and friend requests.
+- `POST /api/me/playtime` with `{ "seconds": 120 }` records authenticated playtime.
+- `GET /api/users/search?q=Player` searches users by username or exact user ID.
+- `GET /api/users/:id` returns a public profile, avatar, stats, and friends.
+- `POST /api/friends/request` with `{ "userId": 2 }` sends or accepts a friend request.
+- `POST /api/friends/respond` with `{ "userId": 2, "action": "accept" }` accepts or declines an incoming request.
+- `POST /api/friends/remove` with `{ "userId": 2 }` removes a friend or cancels a pending request.
+
 Tokens are no longer accepted in avatar URLs. `/api/verify` still accepts a body token as a deprecated compatibility fallback, but new callers should use the Authorization header.
 
 ## Studio Controls

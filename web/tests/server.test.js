@@ -58,6 +58,16 @@ async function request(baseUrl, method, pathName, body, token) {
     return { response, json };
 }
 
+async function signup(baseUrl, username) {
+    const result = await request(baseUrl, 'POST', '/api/signup', {
+        username,
+        password: 'correct-horse'
+    });
+
+    assert.equal(result.response.status, 201);
+    return result.json;
+}
+
 test('signup validates username and password input', async () => {
     await withServer(async ({ baseUrl }) => {
         const { response, json } = await request(baseUrl, 'POST', '/api/signup', {
@@ -156,5 +166,71 @@ test('avatar endpoints require auth, validate shape, and persist colors', async 
         const load = await request(baseUrl, 'GET', '/api/avatar', undefined, token);
         assert.equal(load.response.status, 200);
         assert.deepEqual(load.json.avatar, avatar);
+    });
+});
+
+test('social profiles support search, friend requests, friends, and playtime', async () => {
+    await withServer(async ({ baseUrl }) => {
+        const alice = await signup(baseUrl, 'AlicePlayer');
+        const bob = await signup(baseUrl, 'BobBuilder');
+        await signup(baseUrl, 'CaraGuest');
+
+        const playtime = await request(baseUrl, 'POST', '/api/me/playtime', {
+            seconds: 3661
+        }, bob.token);
+        assert.equal(playtime.response.status, 200);
+        assert.equal(playtime.json.profile.stats.playtimeSeconds, 3661);
+
+        const search = await request(baseUrl, 'GET', '/api/users/search?q=Bob', undefined, alice.token);
+        assert.equal(search.response.status, 200);
+        assert.equal(search.json.users.length, 1);
+        assert.equal(search.json.users[0].username, 'BobBuilder');
+        assert.equal(search.json.users[0].relationship, 'none');
+        assert.equal(search.json.users[0].stats.playtimeSeconds, 3661);
+
+        const requestFriend = await request(baseUrl, 'POST', '/api/friends/request', {
+            userId: bob.userId
+        }, alice.token);
+        assert.equal(requestFriend.response.status, 201);
+        assert.equal(requestFriend.json.relationship, 'outgoing');
+
+        const bobSocialBefore = await request(baseUrl, 'GET', '/api/me/social', undefined, bob.token);
+        assert.equal(bobSocialBefore.response.status, 200);
+        assert.equal(bobSocialBefore.json.incomingRequests.length, 1);
+        assert.equal(bobSocialBefore.json.incomingRequests[0].username, 'AlicePlayer');
+
+        const accept = await request(baseUrl, 'POST', '/api/friends/respond', {
+            userId: alice.userId,
+            action: 'accept'
+        }, bob.token);
+        assert.equal(accept.response.status, 200);
+        assert.equal(accept.json.relationship, 'friends');
+
+        const aliceSocial = await request(baseUrl, 'GET', '/api/me/social', undefined, alice.token);
+        assert.equal(aliceSocial.response.status, 200);
+        assert.equal(aliceSocial.json.profile.relationship, 'self');
+        assert.equal(aliceSocial.json.friends.length, 1);
+        assert.equal(aliceSocial.json.friends[0].username, 'BobBuilder');
+        assert.equal(aliceSocial.json.friends[0].relationship, 'friends');
+
+        const bobProfile = await request(baseUrl, 'GET', `/api/users/${bob.userId}`, undefined, alice.token);
+        assert.equal(bobProfile.response.status, 200);
+        assert.equal(bobProfile.json.profile.username, 'BobBuilder');
+        assert.equal(bobProfile.json.profile.relationship, 'friends');
+        assert.equal(bobProfile.json.profile.friendCount, 1);
+        assert.equal(bobProfile.json.profile.stats.playtimeSeconds, 3661);
+        assert.equal(bobProfile.json.friends.length, 1);
+        assert.equal(bobProfile.json.friends[0].username, 'AlicePlayer');
+
+        const remove = await request(baseUrl, 'POST', '/api/friends/remove', {
+            userId: bob.userId
+        }, alice.token);
+        assert.equal(remove.response.status, 200);
+        assert.equal(remove.json.relationship, 'none');
+
+        const bobProfileAfter = await request(baseUrl, 'GET', `/api/users/${bob.userId}`, undefined, alice.token);
+        assert.equal(bobProfileAfter.response.status, 200);
+        assert.equal(bobProfileAfter.json.profile.relationship, 'none');
+        assert.equal(bobProfileAfter.json.profile.friendCount, 0);
     });
 });

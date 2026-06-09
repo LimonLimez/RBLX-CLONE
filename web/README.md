@@ -32,5 +32,12 @@ Copy `.env.example` to `.env` for local overrides. Do not commit `.env`.
 - `POST /api/verify` with `Authorization: Bearer <token>`.
 - `GET /api/avatar` with `Authorization: Bearer <token>`.
 - `POST /api/avatar` with `Authorization: Bearer <token>` and `{ "avatar": { ... } }`.
+- `GET /api/me/social` with `Authorization: Bearer <token>`.
+- `POST /api/me/playtime` with `Authorization: Bearer <token>` and `{ "seconds": 120 }`.
+- `GET /api/users/search?q=Player` with `Authorization: Bearer <token>`.
+- `GET /api/users/:id` with `Authorization: Bearer <token>`.
+- `POST /api/friends/request` with `Authorization: Bearer <token>` and `{ "userId": 2 }`.
+- `POST /api/friends/respond` with `Authorization: Bearer <token>` and `{ "userId": 2, "action": "accept" }`.
+- `POST /api/friends/remove` with `Authorization: Bearer <token>` and `{ "userId": 2 }`.
 
 Avatar tokens are not accepted in query strings. `/api/verify` has a deprecated body-token fallback for older callers.

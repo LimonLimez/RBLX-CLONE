@@ -23,6 +23,15 @@ async function postJson(url, body, token) {
     return { response, data };
 }
 
+async function getJson(url, token) {
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const response = await fetch(url, { headers });
+    const data = await response.json();
+    return { response, data };
+}
+
 function saveSession(data) {
     localStorage.setItem(tokenKey, data.token);
     localStorage.setItem('username', data.username);
@@ -47,6 +56,228 @@ async function verifySession() {
     localStorage.setItem('username', data.username);
     localStorage.setItem('userId', data.userId);
     return data;
+}
+
+async function requireSession() {
+    const session = await verifySession();
+    if (!session) {
+        window.location.href = '/login';
+        return null;
+    }
+    return session;
+}
+
+function colorToCss(color) {
+    return `rgb(${color.map((value) => Math.round(value * 255)).join(' ')})`;
+}
+
+function formatPlaytime(seconds) {
+    const total = Math.max(0, Number(seconds || 0));
+    if (total < 60) return total > 0 ? `${total}s` : '0m';
+
+    const minutes = Math.floor(total / 60);
+    if (minutes < 60) return `${minutes}m`;
+
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function formatJoined(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return 'Joined recently';
+    return `Joined ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function profileHref(user) {
+    return `/profile/${user.id}`;
+}
+
+function createMiniAvatar(avatar) {
+    const figure = document.createElement('div');
+    figure.className = 'mini-avatar';
+    figure.setAttribute('aria-hidden', 'true');
+
+    const parts = [
+        ['mini-head', avatar.headColor],
+        ['mini-torso', avatar.torsoColor],
+        ['mini-left-arm', avatar.leftArmColor],
+        ['mini-right-arm', avatar.rightArmColor],
+        ['mini-left-leg', avatar.leftLegColor],
+        ['mini-right-leg', avatar.rightLegColor]
+    ];
+
+    for (const [className, color] of parts) {
+        const part = document.createElement('span');
+        part.className = className;
+        part.style.background = colorToCss(color);
+        figure.appendChild(part);
+    }
+
+    return figure;
+}
+
+function emptyMessage(message) {
+    const paragraph = document.createElement('p');
+    paragraph.className = 'empty-state';
+    paragraph.textContent = message;
+    return paragraph;
+}
+
+function relationshipCopy(relationship) {
+    if (relationship === 'friends') return 'Friends';
+    if (relationship === 'outgoing') return 'Request sent';
+    if (relationship === 'incoming') return 'Request received';
+    if (relationship === 'self') return 'Your profile';
+    return 'Not friends';
+}
+
+function makeButton(label, className, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className || 'button';
+    button.textContent = label;
+    button.addEventListener('click', (event) => {
+        Promise.resolve(onClick(event)).catch((error) => {
+            window.alert(error.message || 'That action could not be completed.');
+        });
+    });
+    return button;
+}
+
+async function runFriendAction(buttons, action) {
+    buttons.forEach((button) => {
+        button.disabled = true;
+        button.dataset.originalText = button.textContent;
+        button.textContent = 'Working';
+    });
+
+    try {
+        await action();
+    } finally {
+        buttons.forEach((button) => {
+            button.disabled = false;
+            button.textContent = button.dataset.originalText || button.textContent;
+            delete button.dataset.originalText;
+        });
+    }
+}
+
+function createRelationshipActions(user, onChanged) {
+    const token = getToken();
+    const actions = document.createElement('div');
+    actions.className = 'user-actions';
+
+    if (user.relationship === 'self') {
+        const link = document.createElement('a');
+        link.className = 'button secondary small';
+        link.href = '/avatar';
+        link.textContent = 'Edit avatar';
+        actions.appendChild(link);
+        return actions;
+    }
+
+    if (user.relationship === 'none') {
+        const add = makeButton('Add friend', 'button small', async () => {
+            await runFriendAction([add], async () => {
+                const { response, data } = await postJson('/api/friends/request', { userId: user.id }, token);
+                if (!response.ok) throw new Error(data.error || 'Friend request failed.');
+                onChanged?.(data.profile || user);
+            });
+        });
+        actions.appendChild(add);
+        return actions;
+    }
+
+    if (user.relationship === 'incoming') {
+        const accept = makeButton('Accept', 'button small', async () => {
+            await runFriendAction([accept, decline], async () => {
+                const { response, data } = await postJson('/api/friends/respond', {
+                    userId: user.id,
+                    action: 'accept'
+                }, token);
+                if (!response.ok) throw new Error(data.error || 'Could not accept request.');
+                onChanged?.(data.profile || user);
+            });
+        });
+        const decline = makeButton('Decline', 'button secondary small', async () => {
+            await runFriendAction([accept, decline], async () => {
+                const { response, data } = await postJson('/api/friends/respond', {
+                    userId: user.id,
+                    action: 'decline'
+                }, token);
+                if (!response.ok) throw new Error(data.error || 'Could not decline request.');
+                onChanged?.(data.profile || { ...user, relationship: 'none' });
+            });
+        });
+        actions.append(accept, decline);
+        return actions;
+    }
+
+    const removeLabel = user.relationship === 'friends' ? 'Unfriend' : 'Cancel request';
+    const removeClass = user.relationship === 'friends' ? 'button danger small' : 'button secondary small';
+    const remove = makeButton(removeLabel, removeClass, async () => {
+        await runFriendAction([remove], async () => {
+            const { response, data } = await postJson('/api/friends/remove', { userId: user.id }, token);
+            if (!response.ok) throw new Error(data.error || 'Could not update friend.');
+            onChanged?.(data.profile || user);
+        });
+    });
+    actions.appendChild(remove);
+    return actions;
+}
+
+function createUserCard(user, onChanged) {
+    const card = document.createElement('article');
+    card.className = 'user-card';
+
+    const avatarLink = document.createElement('a');
+    avatarLink.className = 'user-avatar-link';
+    avatarLink.href = profileHref(user);
+    avatarLink.setAttribute('aria-label', `${user.username} profile`);
+    avatarLink.appendChild(createMiniAvatar(user.avatar || defaultAvatar));
+
+    const content = document.createElement('div');
+    content.className = 'user-card-content';
+
+    const name = document.createElement('a');
+    name.className = 'user-name';
+    name.href = profileHref(user);
+    name.textContent = user.username;
+
+    const meta = document.createElement('p');
+    meta.className = 'user-meta';
+    meta.textContent = `ID ${user.id} · ${user.friendCount} friend${user.friendCount === 1 ? '' : 's'} · ${formatPlaytime(user.stats?.playtimeSeconds)} played`;
+
+    const relation = document.createElement('p');
+    relation.className = 'relationship-label';
+    relation.textContent = relationshipCopy(user.relationship);
+
+    content.append(name, meta, relation, createRelationshipActions(user, onChanged));
+    card.append(avatarLink, content);
+    return card;
+}
+
+function renderUserList(container, users, emptyText, onChanged) {
+    if (!container) return;
+    container.innerHTML = '';
+    if (!users || users.length === 0) {
+        container.appendChild(emptyMessage(emptyText));
+        return;
+    }
+
+    for (const user of users) {
+        container.appendChild(createUserCard(user, onChanged));
+    }
+}
+
+function initLogoutButtons() {
+    document.querySelectorAll('[data-logout]').forEach((button) => {
+        button.addEventListener('click', () => {
+            clearSession();
+            window.location.href = '/login';
+        });
+    });
 }
 
 function initLogin() {
@@ -119,24 +350,201 @@ function initDashboard() {
     if (!dashboard) return;
 
     const welcomeHeading = document.querySelector('[data-welcome-heading]');
-    const logout = document.querySelector('[data-logout]');
-
-    logout?.addEventListener('click', () => {
-        clearSession();
-        window.location.href = '/login';
-    });
+    const profileSummary = document.querySelector('[data-profile-summary]');
+    const friendsList = document.querySelector('[data-friends-list]');
+    const incomingList = document.querySelector('[data-incoming-requests]');
+    const outgoingList = document.querySelector('[data-outgoing-requests]');
+    const status = document.querySelector('[data-dashboard-status]');
 
     verifySession()
-        .then((session) => {
+        .then(async (session) => {
             if (!session) {
                 window.location.href = '/login';
                 return;
             }
             if (welcomeHeading) welcomeHeading.textContent = `Welcome, ${session.username}`;
+
+            async function loadSocial() {
+                setStatus(status, '', '');
+                const { response, data } = await getJson('/api/me/social', getToken());
+                if (!response.ok || !data.success) throw new Error(data.error || 'Could not load friends.');
+
+                if (profileSummary) {
+                    profileSummary.innerHTML = '';
+                    const profile = document.createElement('div');
+                    profile.className = 'profile-summary';
+                    profile.appendChild(createMiniAvatar(data.profile.avatar || defaultAvatar));
+
+                    const text = document.createElement('div');
+                    const name = document.createElement('h2');
+                    name.textContent = data.profile.username;
+                    const meta = document.createElement('p');
+                    meta.textContent = `${data.profile.friendCount} friend${data.profile.friendCount === 1 ? '' : 's'} · ${formatPlaytime(data.profile.stats.playtimeSeconds)} played`;
+                    const link = document.createElement('a');
+                    link.className = 'button small';
+                    link.href = profileHref(data.profile);
+                    link.textContent = 'View profile';
+                    text.append(name, meta, link);
+                    profile.appendChild(text);
+                    profileSummary.appendChild(profile);
+                }
+
+                renderUserList(friendsList, data.friends, 'No friends yet. Search for people to add.', loadSocial);
+                renderUserList(incomingList, data.incomingRequests, 'No friend requests right now.', loadSocial);
+                renderUserList(outgoingList, data.outgoingRequests, 'No sent requests.', loadSocial);
+            }
+
+            await loadSocial();
         })
-        .catch(() => {
-            clearSession();
-            window.location.href = '/login';
+        .catch((error) => {
+            setStatus(status, error.message || 'Could not load dashboard.', 'error');
+        });
+}
+
+function initSearch() {
+    const root = document.querySelector('[data-search-page]');
+    if (!root) return;
+
+    const form = document.querySelector('[data-search-form]');
+    const input = document.querySelector('[data-search-input]');
+    const results = document.querySelector('[data-search-results]');
+    const status = document.querySelector('[data-search-status]');
+
+    async function loadResults(query) {
+        setStatus(status, '', '');
+        results.innerHTML = '';
+        results.appendChild(emptyMessage('Searching people'));
+
+        const url = `/api/users/search?q=${encodeURIComponent(query || '')}`;
+        const { response, data } = await getJson(url, getToken());
+        if (!response.ok || !data.success) throw new Error(data.error || 'Search failed.');
+
+        renderUserList(
+            results,
+            data.users,
+            query ? `No people found for "${query}".` : 'No other people have signed up yet.',
+            () => loadResults(input.value.trim())
+        );
+    }
+
+    requireSession()
+        .then((session) => {
+            if (!session) return;
+            const params = new URLSearchParams(window.location.search);
+            const initialQuery = params.get('q') || '';
+            input.value = initialQuery;
+
+            form.addEventListener('submit', (event) => {
+                event.preventDefault();
+                const query = input.value.trim();
+                const nextUrl = query ? `/search?q=${encodeURIComponent(query)}` : '/search';
+                window.history.replaceState(null, '', nextUrl);
+                loadResults(query).catch((error) => {
+                    setStatus(status, error.message || 'Search failed.', 'error');
+                });
+            });
+
+            return loadResults(initialQuery);
+        })
+        .catch((error) => {
+            setStatus(status, error.message || 'Search failed.', 'error');
+        });
+}
+
+function initProfilePage() {
+    const root = document.querySelector('[data-profile-page]');
+    if (!root) return;
+
+    const title = document.querySelector('[data-profile-title]');
+    const label = document.querySelector('[data-profile-label]');
+    const stats = document.querySelector('[data-profile-stats]');
+    const actions = document.querySelector('[data-profile-actions]');
+    const avatar = document.querySelector('[data-profile-avatar]');
+    const friends = document.querySelector('[data-profile-friends]');
+    const status = document.querySelector('[data-profile-status]');
+    let previewPromise = null;
+
+    function selectedProfileId() {
+        const match = window.location.pathname.match(/^\/profile\/(\d+)$/);
+        return match ? match[1] : localStorage.getItem('userId');
+    }
+
+    async function renderProfile(profileData) {
+        const { profile, friends: profileFriends } = profileData;
+        document.title = `${profile.username} - RBLX Clone`;
+        if (title) title.textContent = profile.username;
+        if (label) label.textContent = profile.relationship === 'self' ? 'Your profile' : `User ID ${profile.id}`;
+
+        if (stats) {
+            stats.innerHTML = '';
+            const rows = [
+                ['Friends', String(profile.friendCount)],
+                ['Playtime', formatPlaytime(profile.stats.playtimeSeconds)],
+                ['Last played', profile.stats.lastPlayedAt ? new Date(profile.stats.lastPlayedAt).toLocaleString() : 'Not yet'],
+                ['Joined', formatJoined(profile.createdAt).replace('Joined ', '')]
+            ];
+
+            for (const [name, value] of rows) {
+                const row = document.createElement('div');
+                row.className = 'stat-tile';
+                const statName = document.createElement('span');
+                statName.textContent = name;
+                const statValue = document.createElement('strong');
+                statValue.textContent = value;
+                row.append(statName, statValue);
+                stats.appendChild(row);
+            }
+        }
+
+        if (actions) {
+            actions.innerHTML = '';
+            actions.appendChild(createRelationshipActions(profile, loadProfile));
+        }
+
+        if (avatar) {
+            if (!previewPromise) {
+                previewPromise = createAvatarPreview(avatar, () => {});
+            }
+            const preview = await previewPromise;
+            preview.update(profile.avatar || defaultAvatar, '');
+        }
+
+        renderUserList(
+            friends,
+            profileFriends,
+            profile.relationship === 'self' ? 'You have not added friends yet.' : `${profile.username} has no friends showing yet.`,
+            loadProfile
+        );
+    }
+
+    async function loadProfile() {
+        setStatus(status, '', '');
+        const profileId = selectedProfileId();
+        if (!profileId) {
+            window.location.href = '/dashboard';
+            return;
+        }
+
+        const { response, data } = await getJson(`/api/users/${profileId}`, getToken());
+        if (response.status === 404) {
+            setStatus(status, 'User not found.', 'error');
+            return;
+        }
+        if (!response.ok || !data.success) throw new Error(data.error || 'Profile could not load.');
+
+        if (window.location.pathname === '/profile') {
+            window.history.replaceState(null, '', profileHref(data.profile));
+        }
+        await renderProfile(data);
+    }
+
+    requireSession()
+        .then((session) => {
+            if (!session) return null;
+            return loadProfile();
+        })
+        .catch((error) => {
+            setStatus(status, error.message || 'Profile could not load.', 'error');
         });
 }
 
@@ -483,8 +891,11 @@ function initAvatar() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    initLogoutButtons();
     initLogin();
     initSignup();
     initDashboard();
+    initSearch();
+    initProfilePage();
     initAvatar();
 });
