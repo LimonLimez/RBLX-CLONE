@@ -63,6 +63,13 @@ struct PacketPlayerLeave {
     int playerId;
 };
 
+// 6. Chat (Client <-> Server)
+struct PacketChat {
+    int playerId;
+    char username[32];
+    char message[256];
+};
+
 // 8. Player List (Server -> Client)
 struct PlayerInfo {
     int playerId;
@@ -156,6 +163,8 @@ namespace PacketProtocol {
             case PacketType::WORLD_UPDATE:
                 return payloadSize % sizeof(PartUpdate) == 0 &&
                        payloadSize / sizeof(PartUpdate) <= MAX_WORLD_UPDATES;
+            case PacketType::CHAT:
+                return payloadSize == sizeof(PacketChat);
             case PacketType::WORLD_STATE: {
                 if (payloadSize < sizeof(uint32_t) || !payload) return false;
                 uint32_t count = 0;
@@ -170,8 +179,6 @@ namespace PacketProtocol {
                 return count <= MAX_PLAYERS &&
                        payloadSize == sizeof(uint32_t) + count * sizeof(PlayerInfo);
             }
-            case PacketType::CHAT:
-                return payloadSize <= 512;
             default:
                 return false;
         }

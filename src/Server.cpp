@@ -594,6 +594,21 @@ int main() {
 
                         updatePlayerShadowBody(player);
                         broadcastPacket(PacketProtocol::buildStructPacket(PacketType::PLAYER_STATE, player.state), id);
+                    } else if (frame.type == PacketType::CHAT) {
+                        if (!player.active) {
+                            PacketProtocol::consumeFrame(player.receiveBuffer, frame.frameSize);
+                            continue;
+                        }
+
+                        PacketChat chat;
+                        std::memcpy(&chat, frame.payload, sizeof(chat));
+                        chat.playerId = id;
+                        copyFixedString(chat.username, sizeof(chat.username), PacketProtocol::fixedString(player.username, sizeof(player.username)));
+                        const std::string message = PacketProtocol::fixedString(chat.message, sizeof(chat.message));
+                        if (!message.empty()) {
+                            copyFixedString(chat.message, sizeof(chat.message), message);
+                            broadcastPacket(PacketProtocol::buildStructPacket(PacketType::CHAT, chat));
+                        }
                     }
 
                     PacketProtocol::consumeFrame(player.receiveBuffer, frame.frameSize);
